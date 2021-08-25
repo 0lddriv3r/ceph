@@ -132,35 +132,18 @@ public:
  */
 class BlockSegmentManager final : public SegmentManager {
 public:
-  using access_ertr = crimson::errorator<
-    crimson::ct_error::input_output_error,
-    crimson::ct_error::permission_denied,
-    crimson::ct_error::enoent>;
+  mount_ret mount() final;
 
-
-  struct mount_config_t {
-    std::string path;
-  };
-  using mount_ertr = access_ertr;
-  using mount_ret = access_ertr::future<>;
-  mount_ret mount(const mount_config_t&);
-
-  struct mkfs_config_t {
-    std::string path;
-    size_t segment_size = 0;
-    size_t total_size = 0;
-    seastore_meta_t meta;
-  };
-  using mkfs_ertr = access_ertr;
-  using mkfs_ret = mkfs_ertr::future<>;
-  static mkfs_ret mkfs(mkfs_config_t);
+  mkfs_ret mkfs(seastore_meta_t) final;
   
   using close_ertr = crimson::errorator<
     crimson::ct_error::input_output_error
     >;
   close_ertr::future<> close();
 
-  BlockSegmentManager() = default;
+  BlockSegmentManager(const std::string &path) : device_path(path) {
+    register_metrics();
+  }
   ~BlockSegmentManager();
 
   open_ertr::future<SegmentRef> open(segment_id_t id) final;
@@ -192,7 +175,40 @@ private:
   friend class BlockSegment;
   using segment_state_t = Segment::segment_state_t;
 
-  
+  struct effort_t {
+    uint64_t num = 0;
+    uint64_t bytes = 0;
+
+    void increment(uint64_t read_bytes) {
+      ++num;
+      bytes += read_bytes;
+    }
+  };
+
+  struct {
+    effort_t data_read;
+    effort_t data_write;
+    effort_t metadata_write;
+    uint64_t opened_segments;
+    uint64_t closed_segments;
+    uint64_t closed_segments_unused_bytes;
+    uint64_t released_segments;
+
+    void reset() {
+      data_read = {};
+      data_write = {};
+      metadata_write = {};
+      opened_segments = 0;
+      closed_segments = 0;
+      closed_segments_unused_bytes = 0;
+      released_segments = 0;
+    }
+  } stats;
+
+  void register_metrics();
+  seastar::metrics::metric_group metrics;
+
+  std::string device_path;
   std::unique_ptr<SegmentStateTracker> tracker;
   block_sm_superblock_t superblock;
   seastar::file device;
@@ -211,7 +227,8 @@ private:
 
   char *buffer = nullptr;
 
-  Segment::close_ertr::future<> segment_close(segment_id_t id);
+  Segment::close_ertr::future<> segment_close(
+      segment_id_t id, segment_off_t write_pointer);
 };
 
 }

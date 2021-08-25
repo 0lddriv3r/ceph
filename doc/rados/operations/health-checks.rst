@@ -68,7 +68,7 @@ order for monitor cluster to function properly.
 MON_MSGR2_NOT_ENABLED
 _____________________
 
-The ``ms_bind_msgr2`` option is enabled but one or more monitors is
+The :confval:`ms_bind_msgr2` option is enabled but one or more monitors is
 not configured to bind to a v2 port in the cluster's monmap.  This
 means that features specific to the msgr2 protocol (e.g., encryption)
 are not available on some or all connections.
@@ -1141,9 +1141,9 @@ _______________
 
 One or more PGs has not been scrubbed recently.  PGs are normally scrubbed
 within every configured interval specified by
-:ref:`osd_scrub_max_interval <osd_scrub_max_interval>` globally. This
+:confval:`osd_scrub_max_interval` globally. This
 interval can be overriden on per-pool basis with
-:ref:`scrub_max_interval <scrub_max_interval>`. The warning triggers when
+:confval:`scrub_max_interval`. The warning triggers when
 ``mon_warn_pg_not_scrubbed_ratio`` percentage of interval has elapsed without a
 scrub since it was due.
 
@@ -1159,7 +1159,7 @@ PG_NOT_DEEP_SCRUBBED
 ____________________
 
 One or more PGs has not been deep scrubbed recently.  PGs are normally
-scrubbed every ``osd_deep_scrub_interval`` seconds, and this warning
+scrubbed every :confval:`osd_deep_scrub_interval` seconds, and this warning
 triggers when ``mon_warn_pg_not_deep_scrubbed_ratio`` percentage of interval has elapsed
 without a scrub since it was due.
 
@@ -1210,6 +1210,40 @@ New crashes can be listed with::
 Information about a specific crash can be examined with::
 
   ceph crash info <crash-id>
+
+This warning can be silenced by "archiving" the crash (perhaps after
+being examined by an administrator) so that it does not generate this
+warning::
+
+  ceph crash archive <crash-id>
+
+Similarly, all new crashes can be archived with::
+
+  ceph crash archive-all
+
+Archived crashes will still be visible via ``ceph crash ls`` but not
+``ceph crash ls-new``.
+
+The time period for what "recent" means is controlled by the option
+``mgr/crash/warn_recent_interval`` (default: two weeks).
+
+These warnings can be disabled entirely with::
+
+  ceph config set mgr/crash/warn_recent_interval 0
+
+RECENT_MGR_MODULE_CRASH
+_______________________
+
+One or more ceph-mgr modules has crashed recently, and the crash as
+not yet been archived (acknowledged) by the administrator.  This
+generally indicates a software bug in one of the software modules run
+inside the ceph-mgr daemon.  Although the module that experienced the
+problem maybe be disabled as a result, the function of other modules
+is normally unaffected.
+
+As with the *RECENT_CRASH* health alert, the crash can be inspected with::
+
+    ceph crash info <crash-id>
 
 This warning can be silenced by "archiving" the crash (perhaps after
 being examined by an administrator) so that it does not generate this

@@ -38,13 +38,13 @@ target_link_libraries(
   crimson::gtest
   crimson-seastore)
 
-add_executable(unittest-extmap-manager
-  test_extmap_manager.cc
+add_executable(unittest-object-data-handler
+  test_object_data_handler.cc
   ../gtest_seastar.cc)
-add_ceph_test(unittest-extmap-manager
-  unittest-extmap-manager --memory 256M --smp 1)
+add_ceph_unittest(unittest-object-data-handler
+  --memory 256M --smp 1)
 target_link_libraries(
-  unittest-extmap-manager
+  unittest-object-data-handler
   crimson::gtest
   crimson-seastore
   crimson-os
@@ -82,5 +82,25 @@ target_link_libraries(
   ${CMAKE_DL_LIBS}
   crimson-seastore
   crimson-common)
+
+add_executable(unittest-seastore-randomblock-manager
+  test_randomblock_manager.cc)
+add_ceph_test(unittest-seastore-randomblock-manager
+  unittest-seastore-randomblock-manager --memory 256M --smp 1)
+target_link_libraries(
+  unittest-seastore-randomblock-manager
+  crimson::gtest
+  ${CMAKE_DL_LIBS}
+  crimson-seastore)
+
+add_executable(unittest-seastore-nvmedevice
+  nvmedevice/test_nvmedevice.cc)
+add_ceph_test(unittest-seastore-nvmedevice
+  unittest-seastore-nvmedevice --memory 256M --smp 1)
+target_link_libraries(
+  unittest-seastore-nvmedevice
+  crimson::gtest
+  crimson-seastore
+  aio)
 
 add_subdirectory(onode_tree)

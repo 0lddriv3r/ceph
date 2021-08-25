@@ -10,14 +10,14 @@
 
 class RGWRestRole : public RGWRESTOp {
 protected:
-  string role_name;
-  string role_path;
-  string trust_policy;
-  string policy_name;
-  string perm_policy;
-  string path_prefix;
-  string max_session_duration;
-  RGWRole _role;
+  std::string role_name;
+  std::string role_path;
+  std::string trust_policy;
+  std::string policy_name;
+  std::string perm_policy;
+  std::string path_prefix;
+  std::string max_session_duration;
+  std::unique_ptr<rgw::sal::RGWRole> _role;
 public:
   int verify_permission(optional_yield y) override;
   void send_response() override;
@@ -58,7 +58,7 @@ public:
 };
 
 class RGWGetRole : public RGWRoleRead {
-  int _verify_permission(const RGWRole& role);
+  int _verify_permission(const rgw::sal::RGWRole* role);
 public:
   RGWGetRole() = default;
   int verify_permission(optional_yield y) override;

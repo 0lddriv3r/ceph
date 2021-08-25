@@ -30,6 +30,8 @@
 
 #define dout_subsys ceph_subsys_rgw
 
+using namespace std;
+
 namespace STS {
 
 void Credentials::dump(Formatter *f) const
@@ -79,7 +81,7 @@ int Credentials::generateCredentials(CephContext* cct,
     return ret;
   }
   string error;
-  auto* keyhandler = cryptohandler->get_key_handler(secret, error);
+  std::unique_ptr<CryptoKeyHandler> keyhandler(cryptohandler->get_key_handler(secret, error));
   if (! keyhandler) {
     ldout(cct, 0) << "ERROR: No Key handler found !" << dendl;
     return -EINVAL;
@@ -276,20 +278,20 @@ int AssumeRoleRequest::validate_input() const
   return AssumeRoleRequestBase::validate_input();
 }
 
-std::tuple<int, RGWRole> STSService::getRoleInfo(const DoutPrefixProvider *dpp, 
+std::tuple<int, rgw::sal::RGWRole*> STSService::getRoleInfo(const DoutPrefixProvider *dpp,
                                                  const string& arn,
 						 optional_yield y)
 {
   if (auto r_arn = rgw::ARN::parse(arn); r_arn) {
     auto pos = r_arn->resource.find_last_of('/');
     string roleName = r_arn->resource.substr(pos + 1);
-    RGWRole role(cct, store, roleName, r_arn->account);
-    if (int ret = role.get(dpp, y); ret < 0) {
+    std::unique_ptr<rgw::sal::RGWRole> role = store->get_role(roleName, r_arn->account);
+    if (int ret = role->get(dpp, y); ret < 0) {
       if (ret == -ENOENT) {
         ldpp_dout(dpp, 0) << "Role doesn't exist: " << roleName << dendl;
         ret = -ERR_NO_ROLE_FOUND;
       }
-      return make_tuple(ret, this->role);
+      return make_tuple(ret, nullptr);
     } else {
       auto path_pos = r_arn->resource.find('/');
       string path;
@@ -298,17 +300,17 @@ std::tuple<int, RGWRole> STSService::getRoleInfo(const DoutPrefixProvider *dpp,
       } else {
         path = r_arn->resource.substr(path_pos, ((pos - path_pos) + 1));
       }
-      string r_path = role.get_path();
+      string r_path = role->get_path();
       if (path != r_path) {
         ldpp_dout(dpp, 0) << "Invalid Role ARN: Path in ARN does not match with the role path: " << path << " " << r_path << dendl;
-        return make_tuple(-EACCES, this->role);
+        return make_tuple(-EACCES, nullptr);
       }
       this->role = std::move(role);
-      return make_tuple(0, this->role);
+      return make_tuple(0, this->role.get());
     }
   } else {
     ldpp_dout(dpp, 0) << "Invalid role arn: " << arn << dendl;
-    return make_tuple(-EINVAL, this->role);
+    return make_tuple(-EINVAL, nullptr);
   }
 }
 
@@ -316,15 +318,13 @@ int STSService::storeARN(const DoutPrefixProvider *dpp, string& arn, optional_yi
 {
   int ret = 0;
   std::unique_ptr<rgw::sal::User> user = store->get_user(user_id);
-  if ((ret = user->load_by_id(dpp, y)) < 0) {
+  if ((ret = user->load_user(dpp, y)) < 0) {
     return -ERR_NO_SUCH_ENTITY;
   }
 
   user->get_info().assumed_role_arn = arn;
 
-  ret = user->store_info(dpp, y, RGWUserCtl::PutParams()
-			    .set_old_info(&user->get_info())
-			    .set_exclusive(false));
+  ret = user->store_user(dpp, y, false, &user->get_info());
   if (ret < 0) {
     return -ERR_INTERNAL_ERROR;
   }
@@ -355,8 +355,8 @@ AssumeRoleWithWebIdentityResponse STSService::assumeRoleWithWebIdentity(AssumeRo
     return response;
   }
 
-  string roleId = role.get_id();
-  uint64_t roleMaxSessionDuration = role.get_max_session_duration();
+  string roleId = role->get_id();
+  uint64_t roleMaxSessionDuration = role->get_max_session_duration();
   req.setMaxDuration(roleMaxSessionDuration);
 
   //Validate input
@@ -409,8 +409,8 @@ AssumeRoleResponse STSService::assumeRole(const DoutPrefixProvider *dpp,
     return response;
   }
 
-  string roleId = role.get_id();
-  uint64_t roleMaxSessionDuration = role.get_max_session_duration();
+  string roleId = role->get_id();
+  uint64_t roleMaxSessionDuration = role->get_max_session_duration();
   req.setMaxDuration(roleMaxSessionDuration);
 
   //Validate input

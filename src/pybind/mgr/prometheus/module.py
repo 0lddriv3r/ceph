@@ -5,17 +5,14 @@ import json
 import math
 import os
 import re
-import socket
 import threading
 import time
 from mgr_module import CLIReadCommand, MgrModule, MgrStandbyModule, PG_STATES, Option, ServiceInfoT
-from mgr_util import get_default_addr, profile_method
+from mgr_util import get_default_addr, profile_method, build_url
 from rbd import RBD
 from collections import namedtuple
-try:
-    from typing import DefaultDict, Optional, Dict, Any, Set, cast, Tuple, Union, List
-except ImportError:
-    pass
+
+from typing import DefaultDict, Optional, Dict, Any, Set, cast, Tuple, Union, List
 
 # Defaults for the Prometheus HTTP server.  Can also set in config-key
 # see https://github.com/prometheus/prometheus/wiki/Default-port-allocations
@@ -269,11 +266,15 @@ class MetricCollectionThread(threading.Thread):
 class Module(MgrModule):
     MODULE_OPTIONS = [
         Option(
-            'server_addr'
+            'server_addr',
+            default=get_default_addr(),
+            desc='the IPv4 or IPv6 address on which the module listens for HTTP requests',
         ),
         Option(
             'server_port',
-            type='int'
+            type='int',
+            default=DEFAULT_PORT,
+            desc='the port on which the module listens for HTTP requests'
         ),
         Option(
             'scrape_interval',
@@ -478,7 +479,7 @@ class Module(MgrModule):
         for state in DF_POOL:
             path = 'pool_{}'.format(state)
             metrics[path] = Metric(
-                'gauge',
+                'counter' if state in ('rd', 'rd_bytes', 'wr', 'wr_bytes') else 'gauge',
                 path,
                 'DF pool {}'.format(state),
                 ('pool_id',)
@@ -1366,10 +1367,10 @@ class Module(MgrModule):
                                              self.STALE_CACHE_RETURN]:
             self.stale_cache_strategy = self.STALE_CACHE_FAIL
 
-        server_addr = self.get_localized_module_option(
-            'server_addr', get_default_addr())
-        server_port = self.get_localized_module_option(
-            'server_port', DEFAULT_PORT)
+        server_addr = cast(str, self.get_localized_module_option(
+            'server_addr', get_default_addr()))
+        server_port = cast(int, self.get_localized_module_option(
+            'server_port', DEFAULT_PORT))
         self.log.info(
             "server_addr: %s server_port: %s" %
             (server_addr, server_port)
@@ -1379,10 +1380,9 @@ class Module(MgrModule):
 
         # Publish the URI that others may use to access the service we're
         # about to start serving
-        self.set_uri('http://{0}:{1}/'.format(
-            socket.getfqdn() if server_addr in ['::', '0.0.0.0'] else server_addr,
-            server_port
-        ))
+        if server_addr in ['::', '0.0.0.0']:
+            server_addr = self.get_mgr_ip()
+        self.set_uri(build_url(scheme='http', host=server_addr, port=server_port))
 
         cherrypy.config.update({
             'server.socket_host': server_addr,

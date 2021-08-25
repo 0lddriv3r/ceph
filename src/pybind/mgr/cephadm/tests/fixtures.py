@@ -1,4 +1,6 @@
 import fnmatch
+import asyncio
+from tempfile import NamedTemporaryFile
 from contextlib import contextmanager
 
 from ceph.deployment.service_spec import PlacementSpec, ServiceSpec
@@ -20,7 +22,9 @@ def get_ceph_option(_, key):
 
 
 def _run_cephadm(ret):
-    def foo(*args, **kwargs):
+    def foo(s, host, entity, cmd, e, **kwargs):
+        if cmd == 'gather-facts':
+            return '{}', '', 0
         return [ret], '', 0
     return foo
 
@@ -29,6 +33,11 @@ def match_glob(val, pat):
     ok = fnmatch.fnmatchcase(val, pat)
     if not ok:
         assert pat in val
+
+
+class MockEventLoopThread:
+    def get_result(self, coro):
+        asyncio.run(coro)
 
 
 @contextmanager
@@ -59,6 +68,10 @@ def with_cephadm_module(module_options=None, store=None):
 
         m.__init__('cephadm', 0, 0)
         m._cluster_fsid = "fsid"
+
+        m.event_loop = MockEventLoopThread()
+        m.tkey = NamedTemporaryFile(prefix='test-cephadm-identity-')
+
         yield m
 
 
@@ -68,13 +81,14 @@ def wait(m, c):
 
 
 @contextmanager
-def with_host(m: CephadmOrchestrator, name, refresh_hosts=True):
+def with_host(m: CephadmOrchestrator, name, addr='1.2.3.4', refresh_hosts=True):
     # type: (CephadmOrchestrator, str) -> None
-    wait(m, m.add_host(HostSpec(hostname=name)))
-    if refresh_hosts:
-        CephadmServe(m)._refresh_hosts_and_daemons()
-    yield
-    wait(m, m.remove_host(name))
+    with mock.patch("cephadm.utils.resolve_ip", return_value=addr):
+        wait(m, m.add_host(HostSpec(hostname=name)))
+        if refresh_hosts:
+            CephadmServe(m)._refresh_hosts_and_daemons()
+        yield
+        wait(m, m.remove_host(name))
 
 
 def assert_rm_service(cephadm: CephadmOrchestrator, srv_name):

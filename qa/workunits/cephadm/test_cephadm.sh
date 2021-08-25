@@ -161,6 +161,9 @@ systemctl status docker > /dev/null && ( $CEPHADM --docker version | grep 'ceph 
 $CEPHADM shell --fsid $FSID -- ceph -v | grep 'ceph version'
 $CEPHADM shell --fsid $FSID -e FOO=BAR -- printenv | grep FOO=BAR
 
+# test stdin
+echo foo | $CEPHADM shell -- cat | grep -q foo
+
 ## bootstrap
 ORIG_CONFIG=`mktemp -p $TMPDIR`
 CONFIG=`mktemp -p $TMPDIR`
@@ -415,8 +418,11 @@ expect_false $CEPHADM rm-daemon --fsid $FSID --name mon.a
 # mgr does not
 $CEPHADM rm-daemon --fsid $FSID --name mgr.x
 
+expect_false $CEPHADM zap-osds --fsid $FSID
+$CEPHADM zap-osds --fsid $FSID --force
+
 ## rm-cluster
-expect_false $CEPHADM rm-cluster --fsid $FSID
-$CEPHADM rm-cluster --fsid $FSID --force
+expect_false $CEPHADM rm-cluster --fsid $FSID --zap-osds
+$CEPHADM rm-cluster --fsid $FSID --force --zap-osds
 
 echo PASS

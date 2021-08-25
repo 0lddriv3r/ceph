@@ -33,6 +33,7 @@ static ostream& _prefix(std::ostream *_dout, ReplicatedBackend *pgb) {
   return pgb->get_parent()->gen_dbg_prefix(*_dout);
 }
 
+using std::less;
 using std::list;
 using std::make_pair;
 using std::map;
@@ -382,7 +383,7 @@ void generate_transaction(
       }
 
       if (!op.attr_updates.empty()) {
-	map<string, bufferlist> attrs;
+	map<string, bufferlist, less<>> attrs;
 	for (auto &&p: op.attr_updates) {
 	  if (p.second)
 	    attrs[p.first] = *(p.second);
@@ -671,7 +672,7 @@ int ReplicatedBackend::be_deep_scrub(
       pos.data_hash << bl;
     }
     pos.data_pos += r;
-    if (r == cct->_conf->osd_deep_scrub_stride) {
+    if (static_cast<uint64_t>(r) == cct->_conf->osd_deep_scrub_stride) {
       dout(20) << __func__ << "  " << poid << " more data, digest so far 0x"
 	       << std::hex << pos.data_hash.digest() << std::dec << dendl;
       return -EINPROGRESS;
@@ -1599,7 +1600,7 @@ void ReplicatedBackend::submit_push_data(
   const interval_set<uint64_t> &intervals_included,
   bufferlist data_included,
   bufferlist omap_header,
-  const map<string, bufferlist> &attrs,
+  const map<string, bufferlist, less<>> &attrs,
   const map<string, bufferlist> &omap_entries,
   ObjectStore::Transaction *t)
 {

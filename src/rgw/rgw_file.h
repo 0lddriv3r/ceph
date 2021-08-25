@@ -376,7 +376,7 @@ namespace rgw {
     }
 
     directory* get_directory() {
-      return get<directory>(&variant_type);
+      return boost::get<directory>(&variant_type);
     }
 
     size_t get_size() const { return state.size; }
@@ -1004,9 +1004,8 @@ namespace rgw {
 	}
 	if (token.valid() && (ldh->auth(token.id, token.key) == 0)) {
 	  /* try to store user if it doesn't already exist */
-	  if (user->load_by_id(dpp, null_yield) < 0) {
-	    int ret = user->store_info(dpp, null_yield, RGWUserCtl::PutParams()
-                                                  .set_exclusive(true));
+	  if (user->load_user(dpp, null_yield) < 0) {
+	    int ret = user->store_user(dpp, null_yield, true);
 	    if (ret < 0) {
 	      lsubdout(get_context(), rgw, 10)
 		<< "NOTICE: failed to store new user's info: ret=" << ret
@@ -1430,6 +1429,8 @@ public:
   }
 
   bool eof() {
+    using boost::get;
+
     if (unlikely(cct->_conf->subsys.should_gather(ceph_subsys_rgw, 15))) {
       bool is_offset =
 	unlikely(! get<const char*>(&offset)) ||
@@ -1574,11 +1575,11 @@ public:
 
     class DirIterator
     {
-      vector<rgw_bucket_dir_entry>& objs;
-      vector<rgw_bucket_dir_entry>::iterator obj_iter;
+      std::vector<rgw_bucket_dir_entry>& objs;
+      std::vector<rgw_bucket_dir_entry>::iterator obj_iter;
 
-      map<string, bool>& common_prefixes;
-      map<string, bool>::iterator cp_iter;
+      std::map<std::string, bool>& common_prefixes;
+      std::map<string, bool>::iterator cp_iter;
 
       boost::optional<std::string_view> obj_sref;
       boost::optional<std::string_view> cp_sref;
@@ -1586,8 +1587,8 @@ public:
 
     public:
 
-      DirIterator(vector<rgw_bucket_dir_entry>& objs,
-		  map<string, bool>& common_prefixes)
+      DirIterator(std::vector<rgw_bucket_dir_entry>& objs,
+		  std::map<string, bool>& common_prefixes)
 	: objs(objs), common_prefixes(common_prefixes), _skip_cp(false)
 	{
 	  obj_iter = objs.begin();
@@ -1669,11 +1670,11 @@ public:
 	return cp_sref.get();
       }
 
-      vector<rgw_bucket_dir_entry>::iterator& get_obj_iter() {
+      std::vector<rgw_bucket_dir_entry>::iterator& get_obj_iter() {
 	return obj_iter;
       }
 
-      map<string, bool>::iterator& get_cp_iter() {
+      std::map<string, bool>::iterator& get_cp_iter() {
 	return cp_iter;
       }
 
@@ -1758,6 +1759,8 @@ public:
   }
 
   bool eof() {
+    using boost::get;
+
     if (unlikely(cct->_conf->subsys.should_gather(ceph_subsys_rgw, 15))) {
       bool is_offset =
 	unlikely(! get<const char*>(&offset)) ||
@@ -2490,8 +2493,8 @@ public:
   const std::string& obj_name;
   RGWFileHandle* rgw_fh;
   std::optional<rgw::BlockingAioThrottle> aio;
-  std::optional<rgw::putobj::AtomicObjectProcessor> processor;
-  rgw::putobj::DataProcessor* filter;
+  std::unique_ptr<rgw::sal::Writer> processor;
+  rgw::sal::DataProcessor* filter;
   boost::optional<RGWPutObj_Compress> compressor;
   CompressorRef plugin;
   buffer::list data;

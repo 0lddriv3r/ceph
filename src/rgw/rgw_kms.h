@@ -31,11 +31,13 @@ static const std::string RGW_SSE_KMS_KMIP_SE_KV = "kv";
  * TODO
  * \return
  */
-int make_actual_key_from_kms(CephContext *cct,
-                            map<string, bufferlist>& attrs,
+int make_actual_key_from_kms(const DoutPrefixProvider* dpp,
+                            CephContext *cct,
+                            std::map<std::string, bufferlist>& attrs,
                             std::string& actual_key);
-int reconstitute_actual_key_from_kms(CephContext *cct,
-                            map<string, bufferlist>& attrs,
+int reconstitute_actual_key_from_kms(const DoutPrefixProvider* dpp,
+                            CephContext *cct,
+                            std::map<std::string, bufferlist>& attrs,
                             std::string& actual_key);
 
 /**

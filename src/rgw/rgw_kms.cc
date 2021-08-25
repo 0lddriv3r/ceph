@@ -22,6 +22,7 @@
 #define dout_context g_ceph_context
 #define dout_subsys ceph_subsys_rgw
 
+using namespace std;
 using namespace rgw;
 
 #ifndef FORTEST_VIRTUAL
@@ -250,6 +251,19 @@ protected:
     if (!vault_namespace.empty()){
       ldout(cct, 20) << "Vault Namespace: " << vault_namespace << dendl;
       secret_req.append_header("X-Vault-Namespace", vault_namespace);
+    }
+
+    secret_req.set_verify_ssl(cct->_conf->rgw_crypt_vault_verify_ssl);
+
+    if (!cct->_conf->rgw_crypt_vault_ssl_cacert.empty()) {
+      secret_req.set_ca_path(cct->_conf->rgw_crypt_vault_ssl_cacert);
+    }
+
+    if (!cct->_conf->rgw_crypt_vault_ssl_clientcert.empty()) {
+      secret_req.set_client_cert(cct->_conf->rgw_crypt_vault_ssl_clientcert);
+    }
+    if (!cct->_conf->rgw_crypt_vault_ssl_clientkey.empty()) {
+      secret_req.set_client_key(cct->_conf->rgw_crypt_vault_ssl_clientkey);
     }
 
     res = secret_req.process(null_yield);
@@ -727,7 +741,8 @@ static map<string,string> get_str_map(const string &str) {
 }
 
 
-static int get_actual_key_from_conf(CephContext *cct,
+static int get_actual_key_from_conf(const DoutPrefixProvider* dpp,
+                                    CephContext *cct,
                                     std::string_view key_id,
                                     std::string_view key_selector,
                                     std::string& actual_key)
@@ -745,7 +760,7 @@ static int get_actual_key_from_conf(CephContext *cct,
   try {
     master_key = from_base64((*it).second);
   } catch (std::exception&) {
-    ldout(cct, 5) << "ERROR: get_actual_key_from_conf invalid encryption key id "
+    ldpp_dout(dpp, 5) << "ERROR: get_actual_key_from_conf invalid encryption key id "
                   << "which contains character that is not base64 encoded."
                   << dendl;
     return -EINVAL;
@@ -753,7 +768,7 @@ static int get_actual_key_from_conf(CephContext *cct,
 
   if (master_key.length() == AES_256_KEYSIZE) {
     uint8_t _actual_key[AES_256_KEYSIZE];
-    if (AES_256_ECB_encrypt(cct,
+    if (AES_256_ECB_encrypt(dpp, cct,
         reinterpret_cast<const uint8_t*>(master_key.c_str()), AES_256_KEYSIZE,
         reinterpret_cast<const uint8_t*>(key_selector.data()),
         _actual_key, AES_256_KEYSIZE)) {
@@ -763,7 +778,7 @@ static int get_actual_key_from_conf(CephContext *cct,
     }
     ::ceph::crypto::zeroize_for_security(_actual_key, sizeof(_actual_key));
   } else {
-    ldout(cct, 20) << "Wrong size for key=" << key_id << dendl;
+    ldpp_dout(dpp, 20) << "Wrong size for key=" << key_id << dendl;
     res = -EIO;
   }
 
@@ -929,15 +944,16 @@ static int get_actual_key_from_kmip(CephContext *cct,
 }
 
 
-int reconstitute_actual_key_from_kms(CephContext *cct,
+int reconstitute_actual_key_from_kms(const DoutPrefixProvider* dpp,
+                            CephContext *cct,
                             map<string, bufferlist>& attrs,
                             std::string& actual_key)
 {
   std::string key_id = get_str_attribute(attrs, RGW_ATTR_CRYPT_KEYID);
   std::string kms_backend { cct->_conf->rgw_crypt_s3_kms_backend };
 
-  ldout(cct, 20) << "Getting KMS encryption key for key " << key_id << dendl;
-  ldout(cct, 20) << "SSE-KMS backend is " << kms_backend << dendl;
+  ldpp_dout(dpp, 20) << "Getting KMS encryption key for key " << key_id << dendl;
+  ldpp_dout(dpp, 20) << "SSE-KMS backend is " << kms_backend << dendl;
 
   if (RGW_SSE_KMS_BACKEND_BARBICAN == kms_backend) {
     return get_actual_key_from_barbican(cct, key_id, actual_key);
@@ -953,19 +969,20 @@ int reconstitute_actual_key_from_kms(CephContext *cct,
 
   if (RGW_SSE_KMS_BACKEND_TESTING == kms_backend) {
     std::string key_selector = get_str_attribute(attrs, RGW_ATTR_CRYPT_KEYSEL);
-    return get_actual_key_from_conf(cct, key_id, key_selector, actual_key);
+    return get_actual_key_from_conf(dpp, cct, key_id, key_selector, actual_key);
   }
 
-  ldout(cct, 0) << "ERROR: Invalid rgw_crypt_s3_kms_backend: " << kms_backend << dendl;
+  ldpp_dout(dpp, 0) << "ERROR: Invalid rgw_crypt_s3_kms_backend: " << kms_backend << dendl;
   return -EINVAL;
 }
 
-int make_actual_key_from_kms(CephContext *cct,
+int make_actual_key_from_kms(const DoutPrefixProvider* dpp,
+                            CephContext *cct,
                             map<string, bufferlist>& attrs,
                             std::string& actual_key)
 {
   std::string kms_backend { cct->_conf->rgw_crypt_s3_kms_backend };
   if (RGW_SSE_KMS_BACKEND_VAULT == kms_backend)
     return make_actual_key_from_vault(cct, attrs, actual_key);
-  return reconstitute_actual_key_from_kms(cct, attrs, actual_key);
+  return reconstitute_actual_key_from_kms(dpp, cct, attrs, actual_key);
 }

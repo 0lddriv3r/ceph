@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-from __future__ import absolute_import
 
 import json
 import logging
@@ -98,6 +97,7 @@ class RgwDaemon(RESTController):
                 # extract per-daemon service data and health
                 daemon = {
                     'id': metadata['id'],
+                    'service_map_id': service['id'],
                     'version': metadata['ceph_version'],
                     'server_hostname': hostname,
                     'zonegroup_name': metadata['zonegroup_name'],
@@ -201,8 +201,8 @@ class RgwBucket(RgwRESTController):
                      retention_period_days, retention_period_years):
         rgw_client = RgwClient.instance(owner, daemon_name)
         return rgw_client.set_bucket_locking(bucket_name, mode,
-                                             int(retention_period_days),
-                                             int(retention_period_years))
+                                             retention_period_days,
+                                             retention_period_years)
 
     @staticmethod
     def strip_tenant_from_bucket_name(bucket_name):
@@ -233,7 +233,7 @@ class RgwBucket(RgwRESTController):
 
     def list(self, stats=False, daemon_name=None):
         # type: (bool, Optional[str]) -> List[Any]
-        query_params = '?stats' if stats else ''
+        query_params = '?stats' if str_to_bool(stats) else ''
         result = self.proxy(daemon_name, 'GET', 'bucket{}'.format(query_params))
 
         if stats:
@@ -300,12 +300,16 @@ class RgwBucket(RgwRESTController):
         uid_tenant = uid[:uid.find('$')] if uid.find('$') >= 0 else None
         bucket_name = RgwBucket.get_s3_bucket_name(bucket, uid_tenant)
 
+        locking = self._get_locking(uid, daemon_name, bucket_name)
         if versioning_state:
+            if versioning_state == 'Suspended' and locking['lock_enabled']:
+                raise DashboardException(msg='Bucket versioning cannot be disabled/suspended '
+                                             'on buckets with object lock enabled ',
+                                             http_status_code=409, component='rgw')
             self._set_versioning(uid, daemon_name, bucket_name, versioning_state,
                                  mfa_delete, mfa_token_serial, mfa_token_pin)
 
         # Update locking if it is enabled.
-        locking = self._get_locking(uid, daemon_name, bucket_name)
         if locking['lock_enabled']:
             self._set_locking(uid, daemon_name, bucket_name, lock_mode,
                               lock_retention_period_days,
