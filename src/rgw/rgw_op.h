@@ -44,6 +44,7 @@
 #include "rgw_putobj.h"
 #include "rgw_sal.h"
 #include "rgw_compression_types.h"
+#include "rgw_log.h"
 
 #include "rgw_lc.h"
 #include "rgw_torrent.h"
@@ -52,6 +53,7 @@
 #include "cls/rgw/cls_rgw_client.h"
 #include "rgw_public_access.h"
 #include "rgw_bucket_encryption.h"
+#include "rgw_tracer.h"
 
 #include "services/svc_sys_obj.h"
 #include "services/svc_tier_rados.h"
@@ -87,7 +89,7 @@ int rgw_op_get_bucket_policy_from_attr(const DoutPrefixProvider *dpp,
 class RGWHandler {
 protected:
   rgw::sal::Store* store{nullptr};
-  struct req_state *s{nullptr};
+  req_state *s{nullptr};
 
   int do_init_permissions(const DoutPrefixProvider *dpp, optional_yield y);
   int do_read_permissions(RGWOp* op, bool only_bucket, optional_yield y);
@@ -97,7 +99,7 @@ public:
   virtual ~RGWHandler();
 
   virtual int init(rgw::sal::Store* store,
-                   struct req_state* _s,
+                   req_state* _s,
                    rgw::io::BasicClient* cio);
 
   virtual int init_permissions(RGWOp*, optional_yield y) {
@@ -122,11 +124,11 @@ public:
 
 
 
-void rgw_bucket_object_pre_exec(struct req_state *s);
+void rgw_bucket_object_pre_exec(req_state *s);
 
 namespace dmc = rgw::dmclock;
 
-std::tuple<int, bufferlist > rgw_rest_read_all_input(struct req_state *s,
+std::tuple<int, bufferlist > rgw_rest_read_all_input(req_state *s,
                                         const uint64_t max_len,
                                         const bool allow_chunked=true);
 
@@ -172,19 +174,18 @@ int rgw_rest_get_json_input(CephContext *cct, req_state *s, T& out,
  */
 class RGWOp : public DoutPrefixProvider {
 protected:
-  struct req_state *s;
+  req_state *s;
   RGWHandler *dialect_handler;
   rgw::sal::Store* store;
   RGWCORSConfiguration bucket_cors;
   bool cors_exist;
-  RGWQuotaInfo bucket_quota;
-  RGWQuotaInfo user_quota;
+  RGWQuota quota;
   int op_ret;
   int do_aws4_auth_completion();
 
   virtual int init_quota();
 
-  std::tuple<int, bufferlist> read_all_input(struct req_state *s,
+  std::tuple<int, bufferlist> read_all_input(req_state *s,
                                              const uint64_t max_len,
                                              const bool allow_chunked=true) {
 
@@ -231,7 +232,7 @@ public:
     return 0;
   }
 
-  virtual void init(rgw::sal::Store* store, struct req_state *s, RGWHandler *dialect_handler) {
+  virtual void init(rgw::sal::Store* store, req_state *s, RGWHandler *dialect_handler) {
     this->store = store;
     this->s = s;
     this->dialect_handler = dialect_handler;
@@ -277,6 +278,7 @@ public:
 
   virtual dmc::client_id dmclock_client() { return dmc::client_id::metadata; }
   virtual dmc::Cost dmclock_cost() { return 1; }
+  virtual void write_ops_log_entry(rgw_log_entry& entry) const {};
 };
 
 class RGWDefaultResponseOp : public RGWOp {
@@ -437,6 +439,11 @@ public:
     *filter = nullptr;
     return 0;
   }
+
+  // get lua script to run as a "get object" filter 
+  int get_lua_filter(std::unique_ptr<RGWGetObj_Filter>* filter, 
+      RGWGetObj_Filter* cb);
+
   dmc::client_id dmclock_client() override { return dmc::client_id::data; }
 };
 
@@ -690,7 +697,7 @@ protected:
   parse_path(const std::string_view& path);
   
   std::pair<std::string, std::string>
-  handle_upload_path(struct req_state *s);
+  handle_upload_path(req_state *s);
 
   bool handle_file_verify_permission(RGWBucketInfo& binfo,
 				     const rgw_obj& obj,
@@ -711,7 +718,7 @@ public:
   }
 
   void init(rgw::sal::Store* const store,
-            struct req_state* const s,
+            req_state* const s,
             RGWHandler* const h) override;
 
   int verify_permission(optional_yield y) override;
@@ -855,7 +862,7 @@ protected:
   std::map<std::string, bool> categories;
   std::map<rgw_user_bucket, rgw_usage_log_entry> usage;
   std::map<std::string, rgw_usage_log_entry> summary_map;
-  std::map<std::string, cls_user_bucket_entry> buckets_usage;
+  std::map<std::string, bucket_meta_entry> buckets_usage;
   cls_user_header header;
   RGWStorageStats stats;
 public:
@@ -921,7 +928,7 @@ public:
   void pre_exec() override;
   void execute(optional_yield y) override;
 
-  void init(rgw::sal::Store* store, struct req_state *s, RGWHandler *h) override {
+  void init(rgw::sal::Store* store, req_state *s, RGWHandler *h) override {
     RGWOp::init(store, s, h);
   }
   virtual int get_params(optional_yield y) = 0;
@@ -1094,7 +1101,7 @@ public:
   int verify_permission(optional_yield y) override;
   void pre_exec() override;
   void execute(optional_yield y) override;
-  void init(rgw::sal::Store* store, struct req_state *s, RGWHandler *h) override {
+  void init(rgw::sal::Store* store, req_state *s, RGWHandler *h) override {
     RGWOp::init(store, s, h);
     policy.set_ctx(s->cct);
     relaxed_region_enforcement =
@@ -1211,6 +1218,7 @@ protected:
   std::string multipart_upload_id;
   std::string multipart_part_str;
   int multipart_part_num = 0;
+  jspan multipart_trace;
 
   boost::optional<ceph::real_time> delete_at;
   //append obj
@@ -1247,7 +1255,7 @@ public:
     delete obj_legal_hold;
   }
 
-  void init(rgw::sal::Store* store, struct req_state *s, RGWHandler *h) override {
+  void init(rgw::sal::Store* store, req_state *s, RGWHandler *h) override {
     RGWOp::init(store, s, h);
     policy.set_ctx(s->cct);
   }
@@ -1274,6 +1282,10 @@ public:
                                  rgw::sal::DataProcessor *cb) {
     return 0;
   }
+
+  // get lua script to run as a "put object" filter 
+  int get_lua_filter(std::unique_ptr<rgw::sal::DataProcessor>* filter, 
+      rgw::sal::DataProcessor* cb);
 
   int get_data_cb(bufferlist& bl, off_t bl_ofs, off_t bl_len);
   int get_data(const off_t fst, const off_t lst, bufferlist& bl);
@@ -1319,7 +1331,7 @@ public:
     attrs.emplace(std::move(key), std::move(bl)); /* key and bl are r-value refs */
   }
 
-  void init(rgw::sal::Store* store, struct req_state *s, RGWHandler *h) override {
+  void init(rgw::sal::Store* store, req_state *s, RGWHandler *h) override {
     RGWOp::init(store, s, h);
     policy.set_ctx(s->cct);
   }
@@ -1358,7 +1370,7 @@ public:
       has_policy(false) {
   }
 
-  void init(rgw::sal::Store* store, struct req_state *s, RGWHandler *h) override {
+  void init(rgw::sal::Store* store, req_state *s, RGWHandler *h) override {
     RGWOp::init(store, s, h);
     policy.set_ctx(s->cct);
   }
@@ -1397,7 +1409,7 @@ public:
     attrs.emplace(std::move(key), std::move(bl)); /* key and bl are r-value refs */
   }
 
-  void init(rgw::sal::Store* store, struct req_state *s, RGWHandler *h) override {
+  void init(rgw::sal::Store* store, req_state *s, RGWHandler *h) override {
     RGWOp::init(store, s, h);
     policy.set_ctx(s->cct);
   }
@@ -1424,7 +1436,7 @@ public:
     : dlo_manifest(NULL)
   {}
 
-  void init(rgw::sal::Store* store, struct req_state *s, RGWHandler *h) override {
+  void init(rgw::sal::Store* store, req_state *s, RGWHandler *h) override {
     RGWOp::init(store, s, h);
     policy.set_ctx(s->cct);
   }
@@ -1497,7 +1509,6 @@ protected:
   rgw::sal::Attrs attrs;
   std::string src_tenant_name, src_bucket_name, src_obj_name;
   std::unique_ptr<rgw::sal::Bucket> src_bucket;
-  std::unique_ptr<rgw::sal::Object> src_object;
   std::string dest_tenant_name, dest_bucket_name, dest_obj_name;
   std::unique_ptr<rgw::sal::Bucket> dest_bucket;
   std::unique_ptr<rgw::sal::Object> dest_object;
@@ -1550,13 +1561,13 @@ public:
   static bool parse_copy_location(const std::string_view& src,
                                   std::string& bucket_name,
                                   rgw_obj_key& object,
-                                  struct req_state *s);
+                                  req_state *s);
 
   void emplace_attr(std::string&& key, buffer::list&& bl) {
     attrs.emplace(std::move(key), std::move(bl));
   }
 
-  void init(rgw::sal::Store* store, struct req_state *s, RGWHandler *h) override {
+  void init(rgw::sal::Store* store, req_state *s, RGWHandler *h) override {
     RGWOp::init(store, s, h);
     dest_policy.set_ctx(s->cct);
   }
@@ -1609,7 +1620,7 @@ public:
   void pre_exec() override;
   void execute(optional_yield y) override;
 
-  virtual int get_policy_from_state(rgw::sal::Store* store, struct req_state *s, std::stringstream& ss) { return 0; }
+  virtual int get_policy_from_state(rgw::sal::Store* store, req_state *s, std::stringstream& ss) { return 0; }
   virtual int get_params(optional_yield y) = 0;
   void send_response() override = 0;
   const char* name() const override { return "put_acls"; }
@@ -1646,7 +1657,7 @@ public:
   }
   ~RGWPutLC() override {}
 
-  void init(rgw::sal::Store* store, struct req_state *s, RGWHandler *dialect_handler) override {
+  void init(rgw::sal::Store* store, req_state *s, RGWHandler *dialect_handler) override {
 #define COOKIE_LEN 16
     char buf[COOKIE_LEN + 1];
 
@@ -1659,7 +1670,7 @@ public:
   void pre_exec() override;
   void execute(optional_yield y) override;
 
-//  virtual int get_policy_from_state(RGWRados* store, struct req_state *s, std::stringstream& ss) { return 0; }
+//  virtual int get_policy_from_state(RGWRados* store, req_state *s, std::stringstream& ss) { return 0; }
   virtual int get_params(optional_yield y) = 0;
   void send_response() override = 0;
   const char* name() const override { return "put_lifecycle"; }
@@ -1834,11 +1845,12 @@ protected:
   std::string upload_id;
   RGWAccessControlPolicy policy;
   ceph::real_time mtime;
+  jspan multipart_trace;
 
 public:
   RGWInitMultipart() {}
 
-  void init(rgw::sal::Store* store, struct req_state *s, RGWHandler *h) override {
+  void init(rgw::sal::Store* store, req_state *s, RGWHandler *h) override {
     RGWOp::init(store, s, h);
     policy.set_ctx(s->cct);
   }
@@ -1860,11 +1872,12 @@ protected:
   std::string etag;
   std::string version_id;
   bufferlist data;
-  rgw::sal::MPSerializer* serializer;
+  std::unique_ptr<rgw::sal::MPSerializer> serializer;
+  jspan multipart_trace;
 
 public:
-  RGWCompleteMultipart() : serializer(nullptr) {}
-  ~RGWCompleteMultipart() override { delete serializer; }
+  RGWCompleteMultipart() {}
+  ~RGWCompleteMultipart() = default;
 
   int verify_permission(optional_yield y) override;
   void pre_exec() override;
@@ -1880,6 +1893,8 @@ public:
 };
 
 class RGWAbortMultipart : public RGWOp {
+protected:
+  jspan multipart_trace;
 public:
   RGWAbortMultipart() {}
 
@@ -1901,6 +1916,7 @@ protected:
   int marker;
   RGWAccessControlPolicy policy;
   bool truncated;
+  rgw_placement_rule* placement;
 
 public:
   RGWListMultipart() {
@@ -1909,7 +1925,7 @@ public:
     truncated = false;
   }
 
-  void init(rgw::sal::Store* store, struct req_state *s, RGWHandler *h) override {
+  void init(rgw::sal::Store* store, req_state *s, RGWHandler *h) override {
     RGWOp::init(store, s, h);
     policy = RGWAccessControlPolicy(s->cct);
   }
@@ -1947,7 +1963,7 @@ public:
     default_max = 0;
   }
 
-  void init(rgw::sal::Store* store, struct req_state *s, RGWHandler *h) override {
+  void init(rgw::sal::Store* store, req_state *s, RGWHandler *h) override {
     RGWOp::init(store, s, h);
     max_uploads = default_max;
   }
@@ -2014,6 +2030,7 @@ public:
 
 class RGWDeleteMultiObj : public RGWOp {
 protected:
+  std::vector<delete_multi_obj_entry> ops_log_entries;
   bufferlist data;
   rgw::sal::Bucket* bucket;
   bool quiet;
@@ -2043,6 +2060,8 @@ public:
   const char* name() const override { return "multi_object_delete"; }
   RGWOpType get_type() override { return RGW_OP_DELETE_MULTI_OBJ; }
   uint32_t op_mask() override { return RGW_OP_TYPE_DELETE; }
+
+  void write_ops_log_entry(rgw_log_entry& entry) const override;
 };
 
 class RGWInfo: public RGWOp {
@@ -2057,11 +2076,11 @@ public:
 };
 
 extern int rgw_build_bucket_policies(const DoutPrefixProvider *dpp, rgw::sal::Store* store,
-				     struct req_state* s, optional_yield y);
+				     req_state* s, optional_yield y);
 extern int rgw_build_object_policies(const DoutPrefixProvider *dpp, rgw::sal::Store* store,
-				     struct req_state *s, bool prefetch_data, optional_yield y);
+				     req_state *s, bool prefetch_data, optional_yield y);
 extern void rgw_build_iam_environment(rgw::sal::Store* store,
-				      struct req_state* s);
+				      req_state* s);
 extern std::vector<rgw::IAM::Policy> get_iam_user_policy_from_attr(CephContext* cct,
                         std::map<std::string, bufferlist>& attrs,
                         const std::string& tenant);
@@ -2526,7 +2545,7 @@ protected:
 public:
   RGWGetClusterStat() {}
 
-  void init(rgw::sal::Store* store, struct req_state *s, RGWHandler *h) override {
+  void init(rgw::sal::Store* store, req_state *s, RGWHandler *h) override {
     RGWOp::init(store, s, h);
   }
   int verify_permission(optional_yield) override {return 0;}
@@ -2620,5 +2639,10 @@ inline int parse_value_and_bound(
 
   return 0;
 }
+
+int rgw_policy_from_attrset(const DoutPrefixProvider *dpp,
+                            CephContext *cct,
+                            std::map<std::string, bufferlist>& attrset,
+                            RGWAccessControlPolicy *policy);
 
 #endif /* CEPH_RGW_OP_H */

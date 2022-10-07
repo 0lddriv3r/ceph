@@ -43,8 +43,13 @@ export class InventoryDevicesComponent implements OnInit, OnDestroy {
   // Devices
   @Input() devices: InventoryDevice[] = [];
 
+  @Input() showAvailDeviceOnly = false;
   // Do not display these columns
   @Input() hiddenColumns: string[] = [];
+
+  @Input() hostname = '';
+
+  @Input() diskType = '';
 
   // Show filters for these columns, specify empty array to disable
   @Input() filterColumns = [
@@ -166,12 +171,36 @@ export class InventoryDevicesComponent implements OnInit, OnDestroy {
       if (col) {
         col.filterable = true;
       }
+
+      if (col?.prop === 'human_readable_type' && this.diskType === 'ssd') {
+        col.filterInitValue = this.diskType;
+      }
+
+      if (col?.prop === 'hostname' && this.hostname) {
+        col.filterInitValue = this.hostname;
+      }
     });
 
     if (this.fetchInventory.observers.length > 0) {
       this.fetchInventorySub = this.table.fetchData.subscribe(() => {
         this.fetchInventory.emit();
       });
+    }
+  }
+
+  getDevices() {
+    if (this.showAvailDeviceOnly) {
+      this.hostService.inventoryDeviceList().subscribe(
+        (devices: InventoryDevice[]) => {
+          this.devices = _.filter(devices, 'available');
+          this.devices = [...this.devices];
+        },
+        () => {
+          this.devices = [];
+        }
+      );
+    } else {
+      this.devices = [...this.devices];
     }
   }
 

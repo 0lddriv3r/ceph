@@ -21,6 +21,7 @@
 #include "include/rados/librgw.h"
 #include "include/rados/rgw_file.h"
 #include "rgw/rgw_file.h"
+#include "rgw_lib.h"
 #include "rgw/rgw_lib_frontend.h" // direct requests
 
 #include "gtest/gtest.h"
@@ -31,6 +32,7 @@
 #define dout_subsys ceph_subsys_rgw
 
 using namespace std;
+using namespace rgw; // g_rgwlib
 
 namespace {
 
@@ -189,6 +191,21 @@ TEST(LibRGW, INIT) {
   ASSERT_NE(rgw_h, nullptr);
 }
 
+TEST(LibRGW, MOUNT_NOROOT) {
+  /* do a mount at root="" and verify that it's root is "/" */
+  struct rgw_fs *fs = nullptr;
+  int ret = rgw_mount2(rgw_h, userid.c_str(), access_key.c_str(),
+                       secret_key.c_str(), "", &fs, RGW_MOUNT_FLAG_NONE);
+  ASSERT_EQ(ret, 0);
+  ASSERT_NE(fs, nullptr);
+
+  auto& root_fh = static_cast<RGWLibFS*>(fs->fs_private)->get_fh();
+  ASSERT_EQ(root_fh.get_name(), "/");
+
+  ret = rgw_umount(fs, RGW_UMOUNT_FLAG_NONE);
+  ASSERT_EQ(ret, 0);
+}
+
 TEST(LibRGW, MOUNT) {
   int ret = rgw_mount2(rgw_h, userid.c_str(), access_key.c_str(),
                        secret_key.c_str(), "/", &fs, RGW_MOUNT_FLAG_NONE);
@@ -244,9 +261,9 @@ TEST(LibRGW, SETUP_HIER1)
 		    << std::endl;
 	}
 	RGWPutObjRequest req(cct,
-			     rgwlib.get_store()->get_user(fs_private->get_user()->user_id),
+			     g_rgwlib->get_store()->get_user(fs_private->get_user()->user_id),
 			     bucket_name, obj_name, bl);
-	int rc = rgwlib.get_fe()->execute_req(&req);
+	int rc = g_rgwlib->get_fe()->execute_req(&req);
 	int rc2 = req.get_ret();
 	ASSERT_EQ(rc, 0);
 	ASSERT_EQ(rc2, 0);
@@ -1114,14 +1131,10 @@ TEST(LibRGW, SHUTDOWN) {
 
 int main(int argc, char *argv[])
 {
-  char *v{nullptr};
-  string val;
-  vector<const char*> args;
-
-  argv_to_vec(argc, const_cast<const char**>(argv), args);
+  auto args = argv_to_vec(argc, argv);
   env_to_vec(args);
 
-  v = getenv("AWS_ACCESS_KEY_ID");
+  char* v = getenv("AWS_ACCESS_KEY_ID");
   if (v) {
     access_key = v;
   }
@@ -1131,6 +1144,7 @@ int main(int argc, char *argv[])
     secret_key = v;
   }
 
+  string val;
   for (auto arg_iter = args.begin(); arg_iter != args.end();) {
     if (ceph_argparse_witharg(args, arg_iter, &val, "--access",
 			      (char*) nullptr)) {

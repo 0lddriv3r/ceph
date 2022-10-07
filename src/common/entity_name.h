@@ -52,7 +52,7 @@ struct EntityName
   void set_id(std::string_view id_);
   void set_name(entity_name_t n);
 
-  std::string_view get_type_str() const;
+  const char* get_type_str() const;
 
   uint32_t get_type() const { return type; }
   bool is_osd() const { return get_type() == CEPH_ENTITY_TYPE_OSD; }
@@ -70,8 +70,10 @@ struct EntityName
 
   friend bool operator<(const EntityName& a, const EntityName& b);
   friend std::ostream& operator<<(std::ostream& out, const EntityName& n);
-  friend bool operator==(const EntityName& a, const EntityName& b);
-  friend bool operator!=(const EntityName& a, const EntityName& b);
+
+  bool operator==(const EntityName& rhs) const noexcept {
+    return type == rhs.type && id == rhs.id;
+  }
 
 private:
   struct str_to_entity_type_t {
@@ -86,7 +88,5 @@ private:
 };
 
 WRITE_CLASS_ENCODER(EntityName)
-
-WRITE_EQ_OPERATORS_2(EntityName, type, id)
 
 #endif

@@ -365,7 +365,9 @@ which are as follows:
   List all bucket lifecycle progress.
 
 :command:`lc process`
-  Manually process lifecycle.
+  Manually process lifecycle.  If a bucket is specified (e.g., via
+  --bucket_id or via --bucket and optional --tenant), only that bucket
+  is processed.
 
 :command:`metadata get`
   Get metadata info.
@@ -789,6 +791,10 @@ Options
 	Option for 'user stats' command. When specified, it will update user stats with
 	the current stats reported by user's buckets indexes.
 
+.. option:: --show-config
+
+	Show configuration.
+
 .. option:: --show-log-entries=<flag>
 
 	Enable/disable dump of log entries on log show.
@@ -967,7 +973,7 @@ Remove a user::
 
 Rename a user::
 
-        $ radosgw-admin user rename --uid=johny --new-uid=joe
+        $ radosgw-admin user rename --uid=johnny --new-uid=joe
         
 Remove a user and all associated buckets with their contents::
 
@@ -991,11 +997,11 @@ Rename a bucket::
 
 Move a bucket from the old global tenant space to a specified tenant::
 
-        $ radosgw-admin bucket link --bucket=/foo --uid=12345678$12345678'
+        $ radosgw-admin bucket link --bucket=foo --uid='12345678$12345678'
 
 Link bucket to specified user and change object ACLs::
 
-        $ radosgw-admin bucket chown --bucket=/foo --uid=12345678$12345678'
+        $ radosgw-admin bucket chown --bucket=foo --uid='12345678$12345678'
 
 Show the logs of a bucket from April 1st, 2012::
 

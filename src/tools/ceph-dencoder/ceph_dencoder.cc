@@ -67,6 +67,8 @@ vector<DencoderPlugin> load_plugins()
   fs::path mod_dir{CEPH_DENC_MOD_DIR};
   if (auto ceph_lib = getenv("CEPH_LIB"); ceph_lib) {
     mod_dir = ceph_lib;
+  } else if (fs::is_regular_file("CMakeCache.txt")) {
+    mod_dir = std::filesystem::canonical("lib");
   }
   if (!fs::is_directory(mod_dir)) {
     std::cerr << "unable to load dencoders from "
@@ -100,8 +102,7 @@ int main(int argc, const char **argv)
     }
   }
 
-  vector<const char*> args;
-  argv_to_vec(argc, argv, args);
+  auto args = argv_to_vec(argc, argv);
   env_to_vec(args);
 
   Dencoder *den = NULL;

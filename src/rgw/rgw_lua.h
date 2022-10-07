@@ -1,12 +1,19 @@
 #pragma once
 
 #include <string>
+#include <set>
+#include "rgw_lua_version.h"
 #include "common/async/yield_context.h"
+#include "common/dout.h"
+#include "rgw_sal_fwd.h"
 
+class DoutPrefixProvider;
 class lua_State;
 class rgw_user;
+class DoutPrefixProvider;
 namespace rgw::sal {
-  class Store;
+  class RadosStore;
+  class LuaManager;
 }
 
 namespace rgw::lua {
@@ -14,6 +21,9 @@ namespace rgw::lua {
 enum class context {
   preRequest,
   postRequest,
+  background,
+  getData,
+  putData,
   none
 };
 
@@ -26,18 +36,17 @@ context to_context(const std::string& s);
 bool verify(const std::string& script, std::string& err_msg);
 
 // store a lua script in a context
-int write_script(const DoutPrefixProvider *dpp, rgw::sal::Store* store, const std::string& tenant, optional_yield y, context ctx, const std::string& script);
+int write_script(const DoutPrefixProvider *dpp, rgw::sal::LuaManager* manager, const std::string& tenant, optional_yield y, context ctx, const std::string& script);
 
 // read the stored lua script from a context
-int read_script(const DoutPrefixProvider *dpp, rgw::sal::Store* store, const std::string& tenant, optional_yield y, context ctx, std::string& script);
+int read_script(const DoutPrefixProvider *dpp, rgw::sal::LuaManager* manager, const std::string& tenant, optional_yield y, context ctx, std::string& script);
 
 // delete the stored lua script from a context
-int delete_script(const DoutPrefixProvider *dpp, rgw::sal::Store* store, const std::string& tenant, optional_yield y, context ctx);
-
-#ifdef WITH_RADOSGW_LUA_PACKAGES
-#include <set>
+int delete_script(const DoutPrefixProvider *dpp, rgw::sal::LuaManager* manager, const std::string& tenant, optional_yield y, context ctx);
 
 using packages_t = std::set<std::string>;
+
+#ifdef WITH_RADOSGW_LUA_PACKAGES
 
 // add a lua package to the allowlist
 int add_package(const DoutPrefixProvider *dpp, rgw::sal::Store* store, optional_yield y, const std::string& package_name, bool allow_compilation);

@@ -87,15 +87,9 @@ static ceph::spinlock debug_lock;
    * raw_combined at the end.
    */
   class buffer::raw_combined : public buffer::raw {
-    size_t alignment;
   public:
-    raw_combined(char *dataptr, unsigned l, unsigned align,
-		 int mempool)
-      : raw(dataptr, l, mempool),
-	alignment(align) {
-    }
-    raw* clone_empty() override {
-      return create(len, alignment).release();
+    raw_combined(char *dataptr, unsigned l, int mempool)
+      : raw(dataptr, l, mempool) {
     }
 
     static ceph::unique_leakable_ptr<buffer::raw>
@@ -123,7 +117,7 @@ static ceph::spinlock debug_lock;
       // actual data first, since it has presumably larger alignment restriction
       // then put the raw_combined at the end
       return ceph::unique_leakable_ptr<buffer::raw>(
-	new (ptr + datalen) raw_combined(ptr, len, align, mempool));
+	new (ptr + datalen) raw_combined(ptr, len, mempool));
     }
 
     static void operator delete(void *ptr) {
@@ -153,20 +147,16 @@ static ceph::spinlock debug_lock;
       free(data);
       bdout << "raw_malloc " << this << " free " << (void *)data << " " << bendl;
     }
-    raw* clone_empty() override {
-      return new raw_malloc(len);
-    }
   };
 
 #ifndef __CYGWIN__
   class buffer::raw_posix_aligned : public buffer::raw {
-    unsigned align;
   public:
     MEMPOOL_CLASS_HELPERS();
 
-    raw_posix_aligned(unsigned l, unsigned _align) : raw(l) {
+    raw_posix_aligned(unsigned l, unsigned align) : raw(l) {
       // posix_memalign() requires a multiple of sizeof(void *)
-      align = std::max<unsigned>(_align, sizeof(void *));
+      align = std::max<unsigned>(align, sizeof(void *));
 #ifdef DARWIN
       data = (char *) valloc(len);
 #else
@@ -183,19 +173,14 @@ static ceph::spinlock debug_lock;
       aligned_free(data);
       bdout << "raw_posix_aligned " << this << " free " << (void *)data << bendl;
     }
-    raw* clone_empty() override {
-      return new raw_posix_aligned(len, align);
-    }
   };
 #endif
 
 #ifdef __CYGWIN__
   class buffer::raw_hack_aligned : public buffer::raw {
-    unsigned align;
     char *realdata;
   public:
-    raw_hack_aligned(unsigned l, unsigned _align) : raw(l) {
-      align = _align;
+    raw_hack_aligned(unsigned l, unsigned align) : raw(l) {
       realdata = new char[len+align-1];
       unsigned off = ((uintptr_t)realdata) & (align-1);
       if (off)
@@ -210,38 +195,12 @@ static ceph::spinlock debug_lock;
     ~raw_hack_aligned() {
       delete[] realdata;
     }
-    raw* clone_empty() {
-      return new raw_hack_aligned(len, align);
-    }
   };
 #endif
 
   /*
    * primitive buffer types
    */
-  class buffer::raw_char : public buffer::raw {
-  public:
-    MEMPOOL_CLASS_HELPERS();
-
-    explicit raw_char(unsigned l) : raw(l) {
-      if (len)
-	data = new char[len];
-      else
-	data = 0;
-      bdout << "raw_char " << this << " alloc " << (void *)data << " " << l << bendl;
-    }
-    raw_char(unsigned l, char *b) : raw(b, l) {
-      bdout << "raw_char " << this << " alloc " << (void *)data << " " << l << bendl;
-    }
-    ~raw_char() override {
-      delete[] data;
-      bdout << "raw_char " << this << " free " << (void *)data << bendl;
-    }
-    raw* clone_empty() override {
-      return new raw_char(len);
-    }
-  };
-
   class buffer::raw_claimed_char : public buffer::raw {
   public:
     MEMPOOL_CLASS_HELPERS();
@@ -254,9 +213,6 @@ static ceph::spinlock debug_lock;
       bdout << "raw_claimed_char " << this << " free " << (void *)data
 	    << bendl;
     }
-    raw* clone_empty() override {
-      return new raw_char(len);
-    }
   };
 
   class buffer::raw_static : public buffer::raw {
@@ -265,9 +221,6 @@ static ceph::spinlock debug_lock;
 
     raw_static(const char *d, unsigned l) : raw((char*)d, l) { }
     ~raw_static() override {}
-    raw* clone_empty() override {
-      return new buffer::raw_char(len);
-    }
   };
 
   class buffer::raw_claim_buffer : public buffer::raw {
@@ -276,9 +229,6 @@ static ceph::spinlock debug_lock;
     raw_claim_buffer(const char *b, unsigned l, deleter d)
         : raw((char*)b, l), del(std::move(d)) { }
     ~raw_claim_buffer() override {}
-    raw* clone_empty() override {
-      return new buffer::raw_char(len);
-    }
   };
 
   ceph::unique_leakable_ptr<buffer::raw> buffer::copy(const char *c, unsigned len) {
@@ -439,11 +389,6 @@ static ceph::spinlock debug_lock;
       _off = _len = 0;
     }
     return *this;
-  }
-
-  ceph::unique_leakable_ptr<buffer::raw> buffer::ptr::clone()
-  {
-    return _raw->clone();
   }
 
   void buffer::ptr::swap(ptr& other) noexcept
@@ -1287,6 +1232,8 @@ static ceph::spinlock debug_lock;
 
   void buffer::list::claim_append(list& bl)
   {
+    // check overflow
+    assert(_len + bl._len >= _len);
     // steal the other guy's buffers
     _len += bl._len;
     _num += bl._num;
@@ -1523,16 +1470,17 @@ static ceph::spinlock debug_lock;
    */
   char *buffer::list::c_str()
   {
-    switch (get_num_buffers()) {
-    case 0:
-      // no buffers
-      return nullptr;
-    case 1:
-      // good, we're already contiguous.
-      break;
-    default:
+    if (const auto len = length(); len == 0) {
+      return nullptr;                         // no non-empty buffers
+    } else if (len != _buffers.front().length()) {
       rebuild();
-      break;
+    } else {
+      // there are two *main* scenarios that hit this branch:
+      //   1. bufferlist with single, non-empty buffer;
+      //   2. bufferlist with single, non-empty buffer followed by
+      //      empty buffer. splice() tries to not waste our appendable
+      //      space; to carry it an empty bptr is added at the end.
+      // we account for these and don't rebuild unnecessarily
     }
     return _buffers.front().c_str();
   }
@@ -2029,6 +1977,33 @@ int buffer::list::write_fd(int fd, uint64_t offset) const
 }
 #endif
 
+buffer::list::iov_vec_t buffer::list::prepare_iovs() const
+{
+  size_t index = 0;
+  uint64_t off = 0;
+  iov_vec_t iovs{_num / IOV_MAX + 1};
+  auto it = iovs.begin();
+  for (auto& bp : _buffers) {
+    if (index == 0) {
+      it->offset = off;
+      it->length = 0;
+      size_t nr_iov_created = std::distance(iovs.begin(), it);
+      it->iov.resize(
+	std::min(_num - IOV_MAX * nr_iov_created, (size_t)IOV_MAX));
+    }
+    it->iov[index].iov_base = (void*)bp.c_str();
+    it->iov[index].iov_len = bp.length();
+    off += bp.length();
+    it->length += bp.length();
+    if (++index == IOV_MAX) {
+      // continue with a new vector<iov> if we have more buf
+      ++it;
+      index = 0;
+    }
+  }
+  return iovs;
+}
+
 __u32 buffer::list::crc32c(__u32 crc) const
 {
   int cache_misses = 0;
@@ -2275,7 +2250,6 @@ MEMPOOL_DEFINE_OBJECT_FACTORY(buffer::raw_malloc, buffer_raw_malloc,
 			      buffer_meta);
 MEMPOOL_DEFINE_OBJECT_FACTORY(buffer::raw_posix_aligned,
 			      buffer_raw_posix_aligned, buffer_meta);
-MEMPOOL_DEFINE_OBJECT_FACTORY(buffer::raw_char, buffer_raw_char, buffer_meta);
 MEMPOOL_DEFINE_OBJECT_FACTORY(buffer::raw_claimed_char, buffer_raw_claimed_char,
 			      buffer_meta);
 MEMPOOL_DEFINE_OBJECT_FACTORY(buffer::raw_static, buffer_raw_static,

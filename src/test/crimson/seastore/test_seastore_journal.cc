@@ -6,6 +6,7 @@
 #include <random>
 
 #include "crimson/common/log.h"
+#include "crimson/os/seastore/async_cleaner.h"
 #include "crimson/os/seastore/journal.h"
 #include "crimson/os/seastore/segment_manager/ephemeral.h"
 
@@ -32,7 +33,7 @@ struct record_validator_t {
       auto test = manager.read(
 	record_final_offset.add_relative(addr),
 	block.bl.length()).unsafe_get0();
-      addr.offset += block.bl.length();
+      addr = addr.add_offset(block.bl.length());
       bufferlist bl;
       bl.push_back(test);
       ASSERT_EQ(
@@ -62,57 +63,120 @@ struct record_validator_t {
   }
 };
 
-struct journal_test_t : seastar_test_suite_t, JournalSegmentProvider {
+struct journal_test_t : seastar_test_suite_t, SegmentProvider, JournalTrimmer {
   segment_manager::EphemeralSegmentManagerRef segment_manager;
   WritePipeline pipeline;
-  std::unique_ptr<Journal> journal;
+  JournalRef journal;
 
   std::vector<record_validator_t> records;
 
   std::default_random_engine generator;
 
-  const segment_off_t block_size;
+  seastore_off_t block_size;
 
-  journal_test_t()
-    : segment_manager(segment_manager::create_test_ephemeral()),
-      block_size(segment_manager->get_block_size())
-  {
+  SegmentManagerGroupRef sms;
+
+  segment_id_t next;
+
+  std::map<segment_id_t, segment_seq_t> segment_seqs;
+  std::map<segment_id_t, segment_type_t> segment_types;
+
+  journal_seq_t dummy_tail;
+
+  mutable segment_info_t tmp_info;
+
+  journal_test_t() = default;
+
+  /*
+   * JournalTrimmer interfaces
+   */
+  journal_seq_t get_journal_head() const final { return dummy_tail; }
+
+  void set_journal_head(journal_seq_t) final {}
+
+  journal_seq_t get_dirty_tail() const final { return dummy_tail; }
+
+  journal_seq_t get_alloc_tail() const final { return dummy_tail; }
+
+  void update_journal_tails(journal_seq_t, journal_seq_t) final {}
+
+  /*
+   * SegmentProvider interfaces
+   */
+  const segment_info_t& get_seg_info(segment_id_t id) const final {
+    tmp_info = {};
+    tmp_info.seq = segment_seqs.at(id);
+    tmp_info.type = segment_types.at(id);
+    return tmp_info;
   }
 
-  segment_id_t next = 0;
-  get_segment_ret get_segment() final {
-    return get_segment_ret(
-      get_segment_ertr::ready_future_marker{},
-      next++);
+  segment_id_t allocate_segment(
+    segment_seq_t seq,
+    segment_type_t type,
+    data_category_t,
+    reclaim_gen_t
+  ) final {
+    auto ret = next;
+    next = segment_id_t{
+      segment_manager->get_device_id(),
+      next.device_segment_id() + 1};
+    segment_seqs[ret] = seq;
+    segment_types[ret] = type;
+    return ret;
   }
 
-  journal_seq_t get_journal_tail_target() const final { return journal_seq_t{}; }
-  void update_journal_tail_committed(journal_seq_t paddr) final {}
+  void close_segment(segment_id_t) final {}
+
+  void update_segment_avail_bytes(segment_type_t, paddr_t) final {}
+
+  void update_modify_time(segment_id_t, sea_time_point, std::size_t) final {}
+
+  SegmentManagerGroup* get_segment_manager_group() final { return sms.get(); }
 
   seastar::future<> set_up_fut() final {
-    journal.reset(new Journal(*segment_manager));
-    journal->set_segment_provider(this);
-    journal->set_write_pipeline(&pipeline);
+    segment_manager = segment_manager::create_test_ephemeral();
     return segment_manager->init(
     ).safe_then([this] {
-      return journal->open_for_write();
-    }).safe_then(
-      [](auto){},
-      crimson::ct_error::all_same_way([] {
-	ASSERT_FALSE("Unable to mount");
-      }));
+      return segment_manager->mkfs(
+        segment_manager::get_ephemeral_device_config(0, 1));
+    }).safe_then([this] {
+      block_size = segment_manager->get_block_size();
+      sms.reset(new SegmentManagerGroup());
+      next = segment_id_t(segment_manager->get_device_id(), 0);
+      journal = journal::make_segmented(*this, *this);
+      journal->set_write_pipeline(&pipeline);
+      sms->add_segment_manager(segment_manager.get());
+      return journal->open_for_mkfs();
+    }).safe_then([this](auto) {
+      dummy_tail = journal_seq_t{0,
+        paddr_t::make_seg_paddr(segment_id_t(segment_manager->get_device_id(), 0), 0)};
+    }, crimson::ct_error::all_same_way([] {
+      ASSERT_FALSE("Unable to mount");
+    }));
+  }
+
+  seastar::future<> tear_down_fut() final {
+    return journal->close(
+    ).safe_then([this] {
+      segment_manager.reset();
+      sms.reset();
+      journal.reset();
+    }).handle_error(
+      crimson::ct_error::all_same_way([](auto e) {
+        ASSERT_FALSE("Unable to close");
+      })
+    );
   }
 
   template <typename T>
   auto replay(T &&f) {
     return journal->close(
     ).safe_then([this, f=std::move(f)]() mutable {
-      journal.reset(new Journal(*segment_manager));
-      journal->set_segment_provider(this);
+      journal = journal::make_segmented(*this, *this);
       journal->set_write_pipeline(&pipeline);
       return journal->replay(std::forward<T>(std::move(f)));
     }).safe_then([this] {
-      return journal->open_for_write();
+      return journal->open_for_mount();
     });
   }
 
@@ -134,15 +198,19 @@ struct journal_test_t : seastar_test_suite_t, JournalSegmentProvider {
     replay(
       [&advance,
        &delta_checker]
-      (auto seq, auto base, const auto &di) mutable {
+      (const auto &offsets,
+       const auto &di,
+       const journal_seq_t &,
+       const journal_seq_t &,
+       auto t) mutable {
 	if (!delta_checker) {
 	  EXPECT_FALSE("No Deltas Left");
 	}
-	if (!(*delta_checker)(base, di)) {
+	if (!(*delta_checker)(offsets.record_block_base, di)) {
 	  delta_checker = std::nullopt;
 	  advance();
 	}
-	return Journal::replay_ertr::now();
+	return Journal::replay_ertr::make_ready_future<bool>(true);
       }).unsafe_get0();
     ASSERT_EQ(record_iter, records.end());
     for (auto &i : records) {
@@ -162,10 +230,6 @@ struct journal_test_t : seastar_test_suite_t, JournalSegmentProvider {
     return addr;
   }
 
-  seastar::future<> tear_down_fut() final {
-    return seastar::now();
-  }
-
   extent_t generate_extent(size_t blocks) {
     std::uniform_int_distribution<char> distribution(
       std::numeric_limits<char>::min(),
@@ -174,7 +238,10 @@ struct journal_test_t : seastar_test_suite_t, JournalSegmentProvider {
     char contents = distribution(generator);
     bufferlist bl;
     bl.append(buffer::ptr(buffer::create(blocks * block_size, contents)));
-    return extent_t{extent_types_t::TEST_BLOCK, L_ADDR_NULL, bl};
+    return extent_t{
+      extent_types_t::TEST_BLOCK,
+      L_ADDR_NULL,
+      bl};
   }
 
   delta_info_t generate_delta(size_t bytes) {
@@ -192,6 +259,8 @@ struct journal_test_t : seastar_test_suite_t, JournalSegmentProvider {
       0, 0,
       block_size,
       1,
+      MAX_SEG_SEQ,
+      segment_type_t::NULL_SEG,
       bl
     };
   }
@@ -251,9 +320,9 @@ TEST_F(journal_test_t, roll_journal_and_replay)
        { generate_extent(1), generate_extent(2) },
        { generate_delta(23), generate_delta(30) }
      });
-   auto starting_segment = current.segment;
+   auto starting_segment = current.as_seg_paddr().get_segment_id();
    unsigned so_far = 0;
-   while (current.segment == starting_segment) {
+   while (current.as_seg_paddr().get_segment_id() == starting_segment) {
      current = submit_record(record_t{
 	 { generate_extent(512), generate_extent(512) },
 	 { generate_delta(23), generate_delta(400) }

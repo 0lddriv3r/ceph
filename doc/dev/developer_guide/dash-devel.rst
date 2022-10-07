@@ -31,7 +31,7 @@ introduced in this chapter are based on a so called ``vstart`` environment.
 
 .. note::
 
-  Every ``vstart`` environment needs Ceph `to be compiled`_ from its Github
+  Every ``vstart`` environment needs Ceph `to be compiled`_ from its GitHub
   repository, though Docker environments simplify that step by providing a
   shell script that contains those instructions.
 
@@ -54,7 +54,7 @@ You can read more about vstart in `Deploying a development cluster`_.
 Additional information for developers can also be found in the `Developer
 Guide`_.
 
-.. _Deploying a development cluster: https://docs.ceph.com/docs/master/dev/dev_cluster_deployement/
+.. _Deploying a development cluster: https://docs.ceph.com/docs/master/dev/dev_cluster_deployment/
 .. _Developer Guide: https://docs.ceph.com/docs/master/dev/quick_guide/
 
 Host-based vs Docker-based Development Environments
@@ -96,7 +96,7 @@ based on vstart. Those are:
 
   `ceph-dev`_ is an exception to this rule as one of the options it provides
   is `build-free`_. This is accomplished through a Ceph installation using
-  RPM system packages. You will still be able to work with a local Github
+  RPM system packages. You will still be able to work with a local GitHub
   repository like you are used to.
 
 
@@ -215,8 +215,8 @@ The build process is based on `Node.js <https://nodejs.org/>`_ and requires the
 Prerequisites
 ~~~~~~~~~~~~~
 
- * Node 10.0.0 or higher
- * NPM 5.7.0 or higher
+ * Node 12.18.2 or higher
+ * NPM 6.13.4 or higher
 
 nodeenv:
   During Ceph's build we create a virtualenv with ``node`` and ``npm``
@@ -246,11 +246,7 @@ Adding or updating packages
 Run the following commands to add/update a package::
 
   npm install <PACKAGE_NAME>
-  npm run fix:audit
   npm ci
-
-``fix:audit`` is required because we have some packages that need to be fixed
-to a specific version and npm install tends to overwrite this.
 
 Setting up a Development Server
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -396,8 +392,9 @@ do a full scale e2e run.
 It will verify if everything needed is installed, start a new vstart cluster
 and run the full test suite.
 
-Start all frontend E2E tests by running::
+Start all frontend E2E tests with::
 
+  $ cd src/pybind/mgr/dashboard
   $ ./run-frontend-e2e-tests.sh
 
 Report:
@@ -435,9 +432,9 @@ Prerequisites: you need to install `KCLI
 Configure KCLI plan requirements::
 
   $ sudo chown -R $(id -un) /var/lib/libvirt/images
-  $ mkdir -p /var/lib/libvirt/images/ceph-dashboard dashboard
-  $ kcli create pool -p /var/lib/libvirt/images/ceph-dashboard dashboard
-  $ kcli create network -c 192.168.100.0/24 dashboard
+  $ mkdir -p /var/lib/libvirt/images/ceph-dashboard
+  $ kcli create pool -p /var/lib/libvirt/images/ceph-dashboard ceph-dashboard
+  $ kcli create network -c 192.168.100.0/24 ceph-dashboard
 
 Note:
   This script is aimed to be run as jenkins job so the cleanup is triggered only in a jenkins
@@ -448,6 +445,14 @@ Start E2E tests by running::
   $ cd <your/ceph/repo/dir>
   $ sudo chown -R $(id -un) src/pybind/mgr/dashboard/frontend/{dist,node_modules,src/environments}
   $ ./src/pybind/mgr/dashboard/ci/cephadm/run-cephadm-e2e-tests.sh
+
+Note:
+  In fedora 35, there can occur a permission error when trying to mount the shared_folders. This can be
+  fixed by running::
+
+    $ sudo setfacl -R -m u:qemu:rwx <abs-path-to-your-user-home>
+
+  or also by setting the appropriate permission to your $HOME directory
 
 You can also start a cluster in development mode (so the frontend build starts in watch mode and you
 only have to reload the page for the changes to be reflected) by running::
@@ -680,7 +685,7 @@ applitools eyes test runner, where you can see all your screenshots. And if ther
 Writing More Visual Regression Tests
 ....................................
 
-Please refer to `Applitools's official cypress sdk documentation <https://github.com/applitools/eyes.sdk.javascript1/tree/master/packages/eyes-cypress>`_ to write more tests.
+Please refer to `Applitools's official cypress sdk documentation <https://www.npmjs.com/package/@applitools/eyes-cypress#usage>`_ to write more tests.
 
 Visual Regression Tests In Jenkins
 ..................................
@@ -1034,8 +1039,8 @@ scenarios.
 
 For example - ``throw new DashboardNotFoundError()``.
 
-I18N
-----
+Internationalization (i18n)
+---------------------------
 
 How to extract messages from source code?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1198,6 +1203,92 @@ Keep elements that affect the sentence:
 
   <!-- recommended -->
   <span i18n>Profile <b>foo</b> will be removed.</span>
+
+
+.. _accessibility:
+
+Accessibility
+-------------
+
+Many parts of the Ceph Dashboard are modeled on `Web Content Accessibility Guidelines (WCAG) 2.1 <https://www.w3.org/TR/WCAG21/>`_  level A accessibility conformance guidelines. 
+By implementing accessibility best practices, you are improving the usability of the Ceph Dashboard for blind and visually impaired users.
+
+Summary
+~~~~~~~
+
+A few things you should check before introducing a new code change include:
+
+1) Add `ARIA labels and descriptions <https://www.w3.org/TR/wai-aria/>`_ to actionable HTML elements.
+2) Don't forget to tag ARIA labels/descriptions or any user-readable text for translation (i18n-title, i18n-aria-label...).
+3) Add `ARIA roles <https://www.w3.org/TR/wai-aria/#usage_intro>`_ to tag HTML elements that behave different from their intended behaviour (<a> tags behaving as <buttons>) or that provide extended behaviours (roles).
+4) Avoid poor `color contrast choices <https://www.w3.org/TR/WCAG21/#contrast-minimum>`_ (foreground-background) when styling a component. Here are some :ref:`tools <color-contrast-checkers>` you can use.
+5) When testing menus or dropdowns, be sure to scan them with an :ref:`accessibility checker <accessibility-checkers>` in both opened and closed states. Sometimes issues are hidden when menus are closed.
+
+.. _accessibility-checkers:
+
+Accessibility checkers
+~~~~~~~~~~~~~~~~~~~~~~
+
+During development, you can test the accessibility compliance of your features using one of the tools below:
+
+- `Accessibility insights plugin <https://accessibilityinsights.io/downloads/>`_
+- `Site Improve plugin <https://www.siteimprove.com/integrations/browser-extensions/>`_
+- `Axe devtools <https://www.deque.com/axe/devtools/>`_
+
+Testing with two or more of these tools can greatly improve the detection of accessibility violations.
+
+.. _color-contrast-checkers:
+
+Color contrast checkers
+~~~~~~~~~~~~~~~~~~~~~~~
+
+When adding new colors, making sure they are accessible is also important. Here are some tools which can help with color contrast testing:
+
+- `Accessible web color-contrast checker <https://accessibleweb.com/color-contrast-checker/>`_
+- `Colorsafe generator <https://colorsafe.co/>`_
+
+Accessibility linters
+~~~~~~~~~~~~~~~~~~~~~
+
+If you use VSCode, you may install the `axe accessibility linter <https://marketplace.visualstudio.com/items?itemName=deque-systems.vscode-axe-linter>`_,
+which can help you catch and fix potential issues during development.
+
+Accessibility testing
+~~~~~~~~~~~~~~~~~~~~~
+
+Our e2e testing suite, which is based on Cypress, supports the addition of accessibility tests using `axe-core <https://github.com/dequelabs/axe-core>`_ 
+and `cypress-axe <https://github.com/component-driven/cypress-axe>`_. A custom Cypress command, `cy.checkAccessibility`, can also be used directly. 
+This is a great way to prevent accessibility regressions on high impact components.
+
+Tests can be found under the `a11y folder <./src/pybind/mgr/dashboard/frontend/cypress/integration/a11y>`_ in the dashboard. Here is an example:
+
+.. code:: TypeScript
+
+  describe('Navigation accessibility', { retries: 0 }, () => {
+    const shared = new NavigationPageHelper();
+  
+    beforeEach(() => {
+      cy.login();
+      Cypress.Cookies.preserveOnce('token');
+      shared.navigateTo();
+    });
+  
+    it('top-nav should have no accessibility violations', () => {
+      cy.injectAxe();
+      cy.checkAccessibility('.cd-navbar-top');
+    });
+  
+    it('sidebar should have no accessibility violations', () => {
+      cy.injectAxe();
+      cy.checkAccessibility('nav[id=sidebar]');
+    });
+  
+  });
+
+Additional guidelines
+~~~~~~~~~~~~~~~~~~~~~
+
+If you're unsure about which UI pattern to follow in order to implement an accessibility fix, `patternfly <https://www.patternfly.org/v4/accessibility/accessibility-fundamentals>`_ guidelines can be used.
 
 Backend Development
 -------------------
@@ -1735,8 +1826,8 @@ If we want to write a unit test for the above ``Ping`` controller, create a
   class PingTest(ControllerTestCase):
       @classmethod
       def setup_test(cls):
-          Ping._cp_config['tools.authenticate.on'] = False
-          cls.setup_controllers([Ping])
+          cp_config = {'tools.authenticate.on': True}
+          cls.setup_controllers([Ping], cp_config=cp_config)
 
       def test_ping(self):
           self._get("/api/ping")
@@ -1746,8 +1837,8 @@ If we want to write a unit test for the above ``Ping`` controller, create a
 The ``ControllerTestCase`` class starts by initializing a CherryPy webserver.
 Then it will call the ``setup_test()`` class method where we can explicitly
 load the controllers that we want to test. In the above example we are only
-loading the ``Ping`` controller. We can also disable authentication of a
-controller at this stage, as depicted in the example.
+loading the ``Ping`` controller. We can also provide ``cp_config`` in order to
+update the controller's cherrypy config (e.g. enable authentication as shown in the example).
 
 How to update or create new dashboards in grafana?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1760,7 +1851,7 @@ We generate the dashboard json files directly from this jsonnet file by running 
 command in the grafana/dashboards directory:
 ``jsonnet -m . jsonnet/grafana_dashboards.jsonnet``.
 (For the above command to succeed we need ``jsonnet`` package installed and ``grafonnet-lib``
-directory cloned in our machine. Please refer - 
+directory cloned in our machine. Please refer -
 ``https://grafana.github.io/grafonnet-lib/getting-started/`` in case you have some trouble.)
 
 To update an existing grafana dashboard or to create a new one, we need to update
@@ -1776,7 +1867,7 @@ To specify the grafana dashboard properties such as title, uid etc we can create
 
     local dashboardSchema(title, uid, time_from, refresh, schemaVersion, tags,timezone, timepicker)
 
-To add a graph panel we can spcify the graph schema in a local function such as -
+To add a graph panel we can specify the graph schema in a local function such as -
 
 ::
 
@@ -1800,7 +1891,7 @@ and then use these functions inside the dashboard definition like -
     }
 
 The valid grafonnet-lib attributes can be found here - ``https://grafana.github.io/grafonnet-lib/api-docs/``.
-  
+
 
 How to listen for manager notifications in a controller?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -2335,7 +2426,7 @@ If that checker failed, it means that the current Pull Request is modifying the
 Ceph API and therefore:
 
 #. The versioned OpenAPI specification should be updated explicitly: ``tox -e openapi-fix``.
-#. The team @ceph/api will be requested for reviews (this is automated via Github CODEOWNERS), in order to asses the impact of changes.
+#. The team @ceph/api will be requested for reviews (this is automated via GitHub CODEOWNERS), in order to asses the impact of changes.
 
 Additionally, Sphinx documentation can be generated from the OpenAPI
 specification with ``tox -e openapi-doc``.

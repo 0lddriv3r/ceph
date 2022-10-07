@@ -34,6 +34,22 @@
 #include "common/Formatter.h"
 #include "mds/mdstypes.h"
 
+#if __cplusplus <= 201703L
+template<class Key, class T, class Compare, class Alloc, class Pred>
+typename std::map<Key, T, Compare, Alloc>::size_type
+erase_if(std::map<Key, T, Compare, Alloc>& c, Pred pred) {
+  auto old_size = c.size();
+  for (auto i = c.begin(), last = c.end(); i != last; ) {
+    if (pred(*i)) {
+      i = c.erase(i);
+    } else {
+      ++i;
+    }
+  }
+  return old_size - c.size();
+}
+#endif
+
 class health_check_map_t;
 
 struct ClusterInfo {
@@ -189,7 +205,8 @@ public:
   void print(std::ostream& out) const;
 
   bool is_upgradeable() const {
-    return !mds_map.allows_standby_replay() && mds_map.get_num_in_mds() <= 1;
+    return (mds_map.allows_standby_replay() && mds_map.get_num_in_mds() == 0)
+       || (!mds_map.allows_standby_replay() && mds_map.get_num_in_mds() <= 1);
   }
 
   /**
@@ -258,19 +275,13 @@ public:
       return;
     }
 
-    for (auto &f : filesystems) {
-      std::string_view fs_name = f.second->mds_map.get_fs_name();
-      if (std::find(allowed.begin(), allowed.end(), fs_name) == allowed.end()) {
-	filesystems.erase(f.first);
-      }
-    }
+    erase_if(filesystems, [&](const auto& f) {
+      return std::find(allowed.begin(), allowed.end(), f.second->mds_map.get_fs_name()) == allowed.end();
+    });
 
-    for (auto r : mds_roles) {
-      std::string_view fs_name = fs_name_from_gid(r.first);
-      if (std::find(allowed.begin(), allowed.end(), fs_name) == allowed.end()) {
-	mds_roles.erase(r.first);
-      }
-    }
+    erase_if(mds_roles, [&](const auto& r) {
+      return std::find(allowed.begin(), allowed.end(), fs_name_from_gid(r.first)) == allowed.end();
+    });
   }
 
   void set_enable_multiple(const bool v)
@@ -409,7 +420,7 @@ public:
   Filesystem::ref create_filesystem(
       std::string_view name, int64_t metadata_pool,
       int64_t data_pool, uint64_t features,
-      fs_cluster_id_t fscid);
+      fs_cluster_id_t fscid, bool recover);
 
   /**
    * Remove the filesystem (it must exist).  Caller should already
@@ -523,8 +534,14 @@ public:
   bool filesystem_exists(fs_cluster_id_t fscid) const {return filesystems.count(fscid) > 0;}
   Filesystem::const_ref get_filesystem(fs_cluster_id_t fscid) const {return std::const_pointer_cast<const Filesystem>(filesystems.at(fscid));}
   Filesystem::ref get_filesystem(fs_cluster_id_t fscid) {return filesystems.at(fscid);}
+  Filesystem::ref get_filesystem(mds_gid_t gid) {
+    return filesystems.at(mds_roles.at(gid));
+  }
   Filesystem::const_ref get_filesystem(void) const {return std::const_pointer_cast<const Filesystem>(filesystems.begin()->second);}
   Filesystem::const_ref get_filesystem(std::string_view name) const;
+  Filesystem::const_ref get_filesystem(mds_gid_t gid) const {
+    return filesystems.at(mds_roles.at(gid));
+  }
 
   std::vector<Filesystem::const_ref> get_filesystems(void) const;
 
@@ -562,7 +579,7 @@ public:
    * Assert that the FSMap, Filesystem, MDSMap, mds_info_t relations are
    * all self-consistent.
    */
-  void sanity() const;
+  void sanity(bool pending=false) const;
 
   void encode(ceph::buffer::list& bl, uint64_t features) const;
   void decode(ceph::buffer::list::const_iterator& p);

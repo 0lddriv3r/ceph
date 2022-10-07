@@ -27,8 +27,6 @@ namespace crimson::os {
 class Collection;
 
 class CyanStore final : public FuturizedStore {
-  constexpr static unsigned MAX_KEYS_PER_OMAP_GET_CALL = 32;
-
   const std::string path;
   std::unordered_map<coll_t, boost::intrusive_ptr<Collection>> coll_map;
   std::map<coll_t, boost::intrusive_ptr<Collection>> new_coll_map;
@@ -68,10 +66,10 @@ public:
   seastar::future<> stop() final {
     return seastar::now();
   }
-  seastar::future<> mount() final;
+  mount_ertr::future<> mount() final;
   seastar::future<> umount() final;
 
-  seastar::future<> mkfs(uuid_d new_osd_fsid) final;
+  mkfs_ertr::future<> mkfs(uuid_d new_osd_fsid) final;
   seastar::future<store_statfs_t> stat() const final;
   seastar::future<struct stat> stat(
     CollectionRef c,
@@ -115,7 +113,7 @@ public:
     const ghobject_t& end,
     uint64_t limit) const final;
 
-  read_errorator::future<ceph::bufferlist> omap_get_header(
+  get_attr_errorator::future<ceph::bufferlist> omap_get_header(
     CollectionRef c,
     const ghobject_t& oid) final;
 
@@ -123,8 +121,9 @@ public:
   seastar::future<CollectionRef> open_collection(const coll_t& cid) final;
   seastar::future<std::vector<coll_t>> list_collections() final;
 
-  seastar::future<> do_transaction(CollectionRef ch,
-				   ceph::os::Transaction&& txn) final;
+  seastar::future<> do_transaction_no_callbacks(
+    CollectionRef ch,
+    ceph::os::Transaction&& txn) final;
 
   seastar::future<> write_meta(const std::string& key,
 		  const std::string& value) final;
@@ -137,7 +136,7 @@ public:
     CollectionRef c,
     const ghobject_t& oid);
 
-  seastar::future<std::map<uint64_t, uint64_t>> fiemap(CollectionRef c,
+  read_errorator::future<std::map<uint64_t, uint64_t>> fiemap(CollectionRef c,
 						       const ghobject_t& oid,
 						       uint64_t off,
 						       uint64_t len);
@@ -171,10 +170,13 @@ private:
     const std::string &first,
     const std::string &last);
   int _truncate(const coll_t& cid, const ghobject_t& oid, uint64_t size);
+  int _clone(const coll_t& cid, const ghobject_t& oid,
+             const ghobject_t& noid);
   int _setattrs(const coll_t& cid, const ghobject_t& oid,
-                std::map<std::string,bufferlist>& aset);
+                std::map<std::string,bufferlist>&& aset);
   int _rm_attr(const coll_t& cid, const ghobject_t& oid,
                std::string_view name);
+  int _rm_attrs(const coll_t& cid, const ghobject_t& oid);
   int _create_collection(const coll_t& cid, int bits);
   boost::intrusive_ptr<Collection> _get_collection(const coll_t& cid);
 };

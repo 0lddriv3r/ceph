@@ -8,7 +8,13 @@ To list hosts associated with the cluster:
 
 .. prompt:: bash #
 
-    ceph orch host ls [--format yaml]
+    ceph orch host ls [--format yaml] [--host-pattern <name>] [--label <label>] [--host-status <status>]
+
+where the optional arguments "host-pattern", "label" and "host-status" are used for filtering.
+"host-pattern" is a regex that will match against hostnames and will only return matching hosts
+"label" will only return hosts with the given label
+"host-status" will only return hosts with the given status (currently "offline" or "maintenance")
+Any combination of these filtering flags is valid. You may filter against name, label and/or status simultaneously
 
 .. _cephadm-adding-hosts:    
     
@@ -82,7 +88,7 @@ All osds on the host will be scheduled to be removed. You can check osd removal 
 
 see :ref:`cephadm-osd-removal` for more details about osd removal
 
-You can check if there are no deamons left on the host with the following:
+You can check if there are no daemons left on the host with the following:
 
 .. prompt:: bash #
 
@@ -155,7 +161,9 @@ The following host labels have a special meaning to cephadm.  All start with ``_
   bootstrap was originally run), and the ``client.admin`` key is set to be distributed
   to that host via the ``ceph orch client-keyring ...`` function.  Adding this label
   to additional hosts will normally cause cephadm to deploy config and keyring files
-  in ``/etc/ceph``.
+  in ``/etc/ceph``. Starting from versions 16.2.10 (Pacific) and 17.2.1 (Quincy) in
+  addition to the default location ``/etc/ceph/`` cephadm also stores config and keyring
+  files in the ``/var/lib/ceph/<fsid>/config`` directory.
 
 Maintenance Mode
 ================
@@ -163,19 +171,35 @@ Maintenance Mode
 Place a host in and out of maintenance mode (stops all Ceph daemons on host)::
 
     ceph orch host maintenance enter <hostname> [--force]
-    ceph orch host maintenace exit <hostname>
+    ceph orch host maintenance exit <hostname>
 
 Where the force flag when entering maintenance allows the user to bypass warnings (but not alerts)
 
 See also :ref:`cephadm-fqdn`
 
-Host Specification
-==================
+Rescanning Host Devices
+=======================
+
+Some servers and external enclosures may not register device removal or insertion with the
+kernel. In these scenarios, you'll need to perform a host rescan. A rescan is typically
+non-disruptive, and can be performed with the following CLI command.::
+
+    ceph orch host rescan <hostname> [--with-summary]
+
+The ``with-summary`` flag provides a breakdown of the number of HBAs found and scanned, together
+with any that failed.::
+
+    [ceph: root@rh9-ceph1 /]# ceph orch host rescan rh9-ceph1 --with-summary
+    Ok. 2 adapters detected: 2 rescanned, 0 skipped, 0 failed (0.32s)
+
+Creating many hosts at once
+===========================
 
 Many hosts can be added at once using
-``ceph orch apply -i`` by submitting a multi-document YAML file::
+``ceph orch apply -i`` by submitting a multi-document YAML file:
 
-    ---
+.. code-block:: yaml
+
     service_type: host
     hostname: node-00
     addr: 192.168.0.10
@@ -196,6 +220,118 @@ Many hosts can be added at once using
 This can be combined with service specifications (below) to create a cluster spec
 file to deploy a whole cluster in one command.  see ``cephadm bootstrap --apply-spec``
 also to do this during bootstrap. Cluster SSH Keys must be copied to hosts prior to adding them.
+
+Setting the initial CRUSH location of host
+==========================================
+
+Hosts can contain a ``location`` identifier which will instruct cephadm to 
+create a new CRUSH host located in the specified hierarchy.
+
+.. code-block:: yaml
+
+    service_type: host
+    hostname: node-00
+    addr: 192.168.0.10
+    location:
+      rack: rack1
+
+.. note:: 
+
+  The ``location`` attribute will be only affect the initial CRUSH location. Subsequent
+  changes of the ``location`` property will be ignored. Also, removing a host will no remove
+  any CRUSH buckets.
+
+See also :ref:`crush_map_default_types`.
+
+OS Tuning Profiles
+==================
+
+Cephadm can manage operating system tuning profiles that apply a set of sysctl settings
+to a given set of hosts. First create a YAML spec file in the following format
+
+.. code-block:: yaml
+
+    profile_name: 23-mon-host-profile
+    placement:
+      hosts:
+        - mon-host-01
+        - mon-host-02
+    settings:
+      fs.file-max: 1000000
+      vm.swappiness: '13'
+
+Then apply the tuning profile with::
+
+    ceph orch tuned-profile apply -i <tuned-profile-file-name>
+
+This profile will then be written to ``/etc/sysctl.d/`` on each host matching the
+given placement and `sysctl --system` will be run on the host.
+
+.. note::
+
+  The exact filename the profile will be written to is within ``/etc/sysctl.d/`` is
+  ``<profile-name>-cephadm-tuned-profile.conf`` where <profile-name>
+  is the `profile_name` setting specified in the provided YAML spec. Since sysctl
+  settings are applied in lexicographical order by the filename the setting is
+  specified in, you may want to set the `profile_name` in your spec so
+  that it is applied before or after other conf files that may exist.
+
+.. note::
+
+  These settings are applied only at the host level, and are not specific
+  to any certain daemon or container
+
+.. note::
+
+  Applying tuned profiles is idempotent when the ``--no-overwrite`` option is passed.
+  In this case existing profiles with the same name are not overwritten.
+
+
+Viewing Profiles
+----------------
+
+To view all current profiles cephadm is managing::
+
+    ceph orch tuned-profile ls
+
+.. note:: 
+
+  If you'd like to make modifications and re-apply a profile passing `--format yaml` to the
+  ``tuned-profile ls`` command will present the profiles in a format where they can be copied
+  and re-applied.
+
+
+Removing Profiles
+-----------------
+
+If you no longer want one of the previously applied profiles, it can be removed with::
+
+    ceph orch tuned-profile rm <profile-name>
+
+When a profile is removed, cephadm will clean up the file previously written to /etc/sysctl.d
+
+
+Modifying Profiles
+------------------
+
+While you can modify a profile by simply re-applying a YAML spec with the same profile name,
+you may also want to adjust a setting within a given profile, so there are commands
+for this purpose.
+
+To add or modify a setting for an existing profile::
+
+    ceph orch tuned-profile add-setting <profile-name> <setting-name> <value>
+
+To remove a setting from an existing profile::
+
+    ceph orch tuned-profile rm-setting <profile-name> <setting-name>
+
+.. note:: 
+
+  Modifying the placement will require re-applying a profile with the same name. Keep
+  in mind that profiles are tracked by their name, so whenever a profile with the same
+  name as an existing profile is applied, it will overwrite the old profile unless
+  --no-overwrite is passed.
 
 SSH Configuration
 =================
@@ -232,6 +368,8 @@ You can make use of an existing key by directly importing it with::
 You will then need to restart the mgr daemon to reload the configuration with::
 
   ceph mgr fail
+
+.. _cephadm-ssh-user:
 
 Configuring a different SSH user
 ----------------------------------

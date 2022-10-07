@@ -107,7 +107,7 @@ class MonMap {
   /* ranks which were removed when this map took effect.
      There should only be one at a time, but leave support
      for arbitrary numbers just to be safe. */
-  std::set<int> removed_ranks;
+  std::set<unsigned> removed_ranks;
 
   /**
    * Persistent Features are all those features that once set on a
@@ -529,6 +529,8 @@ protected:
   seastar::future<> build_monmap(const crimson::common::ConfigProxy& conf, bool for_mkfs);
   /// initialize monmap by resolving given service name
   seastar::future<> init_with_dns_srv(bool for_mkfs, const std::string& name);
+  /// initialize monmap with `mon_host` or `mon_host_override`
+  bool maybe_init_with_mon_host(const std::string& mon_host, bool for_mkfs);
 #else
   /// read from encoded monmap file
   int init_with_monmap(const std::string& monmap, std::ostream& errout);

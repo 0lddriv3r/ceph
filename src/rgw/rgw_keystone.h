@@ -4,8 +4,10 @@
 #ifndef CEPH_RGW_KEYSTONE_H
 #define CEPH_RGW_KEYSTONE_H
 
-#include <type_traits>
+#include <atomic>
 #include <string_view>
+#include <type_traits>
+#include <utility>
 
 #include <boost/optional.hpp>
 
@@ -14,7 +16,6 @@
 #include "common/ceph_mutex.h"
 #include "global/global_init.h"
 
-#include <atomic>
 
 bool rgw_is_pki_token(const std::string& token);
 void rgw_get_token_id(const std::string& token, std::string& token_id);
@@ -119,14 +120,17 @@ public:
   typedef RGWKeystoneHTTPTransceiver RGWValidateKeystoneToken;
   typedef RGWKeystoneHTTPTransceiver RGWGetKeystoneAdminToken;
 
-  static int get_admin_token(CephContext* const cct,
+  static int get_admin_token(const DoutPrefixProvider *dpp,
+                             CephContext* const cct,
                              TokenCache& token_cache,
                              const Config& config,
                              std::string& token);
-  static int issue_admin_token_request(CephContext* const cct,
+  static int issue_admin_token_request(const DoutPrefixProvider *dpp,
+                                       CephContext* const cct,
                                        const Config& config,
                                        TokenEnvelope& token);
-  static int get_keystone_barbican_token(CephContext * const cct,
+  static int get_keystone_barbican_token(const DoutPrefixProvider *dpp,
+                                         CephContext * const cct,
                                          std::string& token);
 };
 
@@ -194,9 +198,9 @@ public:
   bool has_role(const std::string& r) const;
   bool expired() const {
     const uint64_t now = ceph_clock_now().sec();
-    return now >= static_cast<uint64_t>(get_expires());
+    return std::cmp_greater_equal(now, get_expires());
   }
-  int parse(CephContext* cct,
+  int parse(const DoutPrefixProvider *dpp, CephContext* cct,
             const std::string& token_str,
             ceph::buffer::list& bl /* in */,
             ApiVersion version);
@@ -257,7 +261,7 @@ public:
   void add(const std::string& token_id, const TokenEnvelope& token);
   void add_admin(const TokenEnvelope& token);
   void add_barbican(const TokenEnvelope& token);
-  void invalidate(const std::string& token_id);
+  void invalidate(const DoutPrefixProvider *dpp, const std::string& token_id);
   bool going_down() const;
 private:
   void add_locked(const std::string& token_id, const TokenEnvelope& token);

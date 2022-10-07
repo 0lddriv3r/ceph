@@ -15,6 +15,10 @@ class TestBatch(object):
         b = batch.Batch([])
         b.main()
 
+    def test_invalid_osd_ids_passed(self):
+        with pytest.raises(SystemExit):
+            batch.Batch(argv=['--osd-ids', '1', 'foo']).main()
+
     def test_disjoint_device_lists(self, factory):
         device1 = factory(used_by_ceph=False, available=True, abspath="/dev/sda")
         device2 = factory(used_by_ceph=False, available=True, abspath="/dev/sdb")
@@ -28,7 +32,10 @@ class TestBatch(object):
     def test_reject_partition(self, mocked_device):
         mocked_device.return_value = MagicMock(
             is_partition=True,
+            has_fs=False,
+            is_lvm_member=False,
             has_gpt_headers=False,
+            has_partitions=False,
         )
         with pytest.raises(ArgumentError):
             arg_validators.ValidBatchDevice()('foo')
@@ -217,6 +224,16 @@ class TestBatch(object):
         fast = batch.get_physical_fast_allocs(mock_devices_available,
                                               'block_db', 2, 2, args)
         assert len(fast) == 2
+
+    def test_get_physical_fast_allocs_abs_size(self, factory,
+                                               conf_ceph_stub,
+                                               mock_devices_available):
+        conf_ceph_stub('[global]\nfsid=asdf-lkjh')
+        args = factory(block_db_slots=None, get_block_db_size=None)
+        fasts = batch.get_physical_fast_allocs(mock_devices_available,
+                                              'block_db', 2, 2, args)
+        for fast, dev in zip(fasts, mock_devices_available):
+            assert fast[2] == int(dev.vg_size[0] / 2)
 
     def test_batch_fast_allocations_one_block_db_length(self, factory, conf_ceph_stub,
                                                   mock_lv_device_generator):

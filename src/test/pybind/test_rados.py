@@ -5,6 +5,7 @@ from nose.tools import eq_ as eq, ok_ as ok, assert_raises
 from rados import (Rados, Error, RadosStateError, Object, ObjectExists,
                    ObjectNotFound, ObjectBusy, NotConnected,
                    LIBRADOS_ALL_NSPACES, WriteOpCtx, ReadOpCtx, LIBRADOS_CREATE_EXCLUSIVE,
+                   LIBRADOS_CMPXATTR_OP_EQ, LIBRADOS_CMPXATTR_OP_GT, LIBRADOS_CMPXATTR_OP_LT, OSError,
                    LIBRADOS_SNAP_HEAD, LIBRADOS_OPERATION_BALANCE_READS, LIBRADOS_OPERATION_SKIPRWLOCKS, MonitorLog, MAX_ERRNO, NoData, ExtendMismatch)
 from datetime import timedelta
 import time
@@ -366,17 +367,14 @@ class TestIoctx(object):
     def test_get_pool_name(self):
         eq(self.ioctx.get_pool_name(), 'test_pool')
 
-    @attr('snap')
     def test_create_snap(self):
         assert_raises(ObjectNotFound, self.ioctx.remove_snap, 'foo')
         self.ioctx.create_snap('foo')
         self.ioctx.remove_snap('foo')
 
-    @attr('snap')
     def test_list_snaps_empty(self):
         eq(list(self.ioctx.list_snaps()), [])
 
-    @attr('snap')
     def test_list_snaps(self):
         snaps = ['snap1', 'snap2', 'snap3']
         for snap in snaps:
@@ -384,19 +382,16 @@ class TestIoctx(object):
         listed_snaps = [snap.name for snap in self.ioctx.list_snaps()]
         eq(snaps, listed_snaps)
 
-    @attr('snap')
     def test_lookup_snap(self):
         self.ioctx.create_snap('foo')
         snap = self.ioctx.lookup_snap('foo')
         eq(snap.name, 'foo')
 
-    @attr('snap')
     def test_snap_timestamp(self):
         self.ioctx.create_snap('foo')
         snap = self.ioctx.lookup_snap('foo')
         snap.get_timestamp()
 
-    @attr('snap')
     def test_remove_snap(self):
         self.ioctx.create_snap('foo')
         (snap,) = self.ioctx.list_snaps()
@@ -404,7 +399,7 @@ class TestIoctx(object):
         self.ioctx.remove_snap('foo')
         eq(list(self.ioctx.list_snaps()), [])
 
-    @attr('snap')
+    @attr('rollback')
     def test_snap_rollback(self):
         self.ioctx.write("insnap", b"contents1")
         self.ioctx.create_snap("snap1")
@@ -414,7 +409,6 @@ class TestIoctx(object):
         self.ioctx.remove_snap("snap1")
         self.ioctx.remove_object("insnap")
 
-    @attr('snap')
     def test_snap_read(self):
         self.ioctx.write("insnap", b"contents1")
         self.ioctx.create_snap("snap1")
@@ -578,7 +572,7 @@ class TestIoctx(object):
             self.ioctx.operate_read_op(read_op, "hw")
             eq(list(iter), [])
 
-    def test_remove_omap_ramge2(self):
+    def test_remove_omap_range2(self):
         keys = ("1", "2", "3", "4")
         values = (b"a", b"bb", b"ccc", b"dddd")
         with WriteOpCtx() as write_op:
@@ -597,6 +591,50 @@ class TestIoctx(object):
             eq(ret, 0)
             self.ioctx.operate_read_op(read_op, "test_obj")
             eq(list(iter), [("4", b"dddd")])
+
+    def test_omap_cmp(self):
+        object_id = 'test'
+        self.ioctx.write(object_id, b'omap_cmp')
+        with WriteOpCtx() as write_op:
+            self.ioctx.set_omap(write_op, ('key1',), ('1',))
+            self.ioctx.operate_write_op(write_op, object_id)
+        with WriteOpCtx() as write_op:
+            write_op.omap_cmp('key1', '1', LIBRADOS_CMPXATTR_OP_EQ)
+            self.ioctx.set_omap(write_op, ('key1',), ('2',))
+            self.ioctx.operate_write_op(write_op, object_id)
+        with ReadOpCtx() as read_op:
+            iter, ret = self.ioctx.get_omap_vals_by_keys(read_op, ('key1',))
+            eq(ret, 0)
+            self.ioctx.operate_read_op(read_op, object_id)
+            eq(list(iter), [('key1', b'2')])
+        with WriteOpCtx() as write_op:
+            write_op.omap_cmp('key1', '1', LIBRADOS_CMPXATTR_OP_GT)
+            self.ioctx.set_omap(write_op, ('key1',), ('3',))
+            self.ioctx.operate_write_op(write_op, object_id)
+        with ReadOpCtx() as read_op:
+            iter, ret = self.ioctx.get_omap_vals_by_keys(read_op, ('key1',))
+            eq(ret, 0)
+            self.ioctx.operate_read_op(read_op, object_id)
+            eq(list(iter), [('key1', b'3')])
+        with WriteOpCtx() as write_op:
+            write_op.omap_cmp('key1', '4', LIBRADOS_CMPXATTR_OP_LT)
+            self.ioctx.set_omap(write_op, ('key1',), ('4',))
+            self.ioctx.operate_write_op(write_op, object_id)
+        with ReadOpCtx() as read_op:
+            iter, ret = self.ioctx.get_omap_vals_by_keys(read_op, ('key1',))
+            eq(ret, 0)
+            self.ioctx.operate_read_op(read_op, object_id)
+            eq(list(iter), [('key1', b'4')])
+        with WriteOpCtx() as write_op:
+            write_op.omap_cmp('key1', '1', LIBRADOS_CMPXATTR_OP_EQ)
+            self.ioctx.set_omap(write_op, ('key1',), ('5',))
+            try:
+                self.ioctx.operate_write_op(write_op, object_id)
+            except (OSError, ExtendMismatch) as e:
+                eq(e.errno, 125)
+            else:
+                message = "omap_cmp did not raise Exception when omap content does not match"
+                raise AssertionError(message)
 
     def test_cmpext_op(self):
         object_id = 'test'
@@ -898,6 +936,7 @@ class TestIoctx(object):
         r, _, _ = self.rados.mon_command(json.dumps(cmd), b'')
         eq(r, 0)
 
+    @attr('wait')
     def test_aio_read_wait_for_complete(self):
         # use wait_for_complete() and wait for cb by
         # watching retval[0]
@@ -933,6 +972,7 @@ class TestIoctx(object):
         eq(retval[0], payload)
         eq(sys.getrefcount(comp), 2)
 
+    @attr('wait')
     def test_aio_read_wait_for_complete_and_cb(self):
         # use wait_for_complete_and_cb(), verify retval[0] is
         # set by the time we regain control
@@ -960,6 +1000,7 @@ class TestIoctx(object):
         eq(retval[0], payload)
         eq(sys.getrefcount(comp), 2)
 
+    @attr('wait')
     def test_aio_read_wait_for_complete_and_cb_error(self):
         # error case, use wait_for_complete_and_cb(), verify retval[0] is
         # set by the time we regain control
@@ -1214,7 +1255,6 @@ class TestObject(object):
         eq(self.object.read(3), b'bar')
         eq(self.object.read(3), b'baz')
 
-@attr('snap')
 class TestIoCtxSelfManagedSnaps(object):
     def setUp(self):
         self.rados = Rados(conffile='')
@@ -1230,6 +1270,7 @@ class TestIoCtxSelfManagedSnaps(object):
         self.rados.delete_pool('test_pool')
         self.rados.shutdown()
 
+    @attr('rollback')
     def test(self):
         # cannot mix-and-match pool and self-managed snapshot mode
         self.ioctx.set_self_managed_snap_write([])
@@ -1328,6 +1369,7 @@ class TestCommand(object):
         eq(u"pool '\u9ec5' created", out)
 
 
+@attr('watch')
 class TestWatchNotify(object):
     OID = "test_watch_notify"
 
@@ -1356,8 +1398,9 @@ class TestWatchNotify(object):
         def callback(notify_id, notifier_id, watch_id, data):
             with self.lock:
                 if watch_id not in self.notify_cnt:
-                    self.notify_cnt[watch_id] = 0
-                self.notify_cnt[watch_id] += 1
+                    self.notify_cnt[watch_id] = 1
+                elif  self.notify_data[watch_id] != data:
+                    self.notify_cnt[watch_id] += 1
                 self.notify_data[watch_id] = data
         return callback
 

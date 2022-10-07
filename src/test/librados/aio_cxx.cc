@@ -13,8 +13,10 @@
 #include "include/types.h"
 #include "include/stringify.h"
 #include "include/scope_guard.h"
+#include "common/ceph_mutex.h"
 
 #include "test_cxx.h"
+#include "crimson_utils.h"
 
 using namespace std;
 using namespace librados;
@@ -1309,6 +1311,7 @@ public:
 
 // EC test cases
 TEST(LibRadosAioEC, SimpleWritePP) {
+  SKIP_IF_CRIMSON();
   char buf[128];
   memset(buf, 0xcc, sizeof(buf));
   bufferlist bl1;
@@ -1343,6 +1346,7 @@ TEST(LibRadosAioEC, SimpleWritePP) {
 }
 
 TEST(LibRadosAioEC, WaitForSafePP) {
+  SKIP_IF_CRIMSON();
   AioTestDataECPP test_data;
   ASSERT_EQ("", test_data.init());
   auto my_completion = std::unique_ptr<AioCompletion>{Rados::aio_create_completion()};
@@ -1359,6 +1363,7 @@ TEST(LibRadosAioEC, WaitForSafePP) {
 }
 
 TEST(LibRadosAioEC, RoundTripPP) {
+  SKIP_IF_CRIMSON();
   AioTestDataECPP test_data;
   ASSERT_EQ("", test_data.init());
   auto my_completion = std::unique_ptr<AioCompletion>{Rados::aio_create_completion()};
@@ -1389,6 +1394,7 @@ TEST(LibRadosAioEC, RoundTripPP) {
 }
 
 TEST(LibRadosAioEC, RoundTripPP2) {
+  SKIP_IF_CRIMSON();
   AioTestDataECPP test_data;
   ASSERT_EQ("", test_data.init());
   auto my_completion = std::unique_ptr<AioCompletion>{Rados::aio_create_completion()};
@@ -1421,6 +1427,7 @@ TEST(LibRadosAioEC, RoundTripPP2) {
 //using ObjectWriteOperation/ObjectReadOperation with iohint
 TEST(LibRadosAioEC, RoundTripPP3)
 {
+  SKIP_IF_CRIMSON();
   Rados cluster;
   std::string pool_name = get_temp_pool_name();
   ASSERT_EQ("", create_one_pool_pp(pool_name, cluster));
@@ -1524,6 +1531,7 @@ TEST(LibRadosAioPP, RemoveTestPP) {
 }
 
 TEST(LibRadosAioEC, RoundTripSparseReadPP) {
+  SKIP_IF_CRIMSON();
   AioTestDataECPP test_data;
   ASSERT_EQ("", test_data.init());
   auto my_completion = std::unique_ptr<AioCompletion>{Rados::aio_create_completion()};
@@ -1555,13 +1563,14 @@ TEST(LibRadosAioEC, RoundTripSparseReadPP) {
 }
 
 TEST(LibRadosAioEC, RoundTripAppendPP) {
+  SKIP_IF_CRIMSON();
   AioTestDataECPP test_data;
   ASSERT_EQ("", test_data.init());
   auto my_completion = std::unique_ptr<AioCompletion>{Rados::aio_create_completion()};
   ASSERT_TRUE(my_completion);
-  bool requires;
-  ASSERT_EQ(0, test_data.m_ioctx.pool_requires_alignment2(&requires));
-  ASSERT_TRUE(requires);
+  bool req;
+  ASSERT_EQ(0, test_data.m_ioctx.pool_requires_alignment2(&req));
+  ASSERT_TRUE(req);
   uint64_t alignment;
   ASSERT_EQ(0, test_data.m_ioctx.pool_required_alignment2(&alignment));
   ASSERT_NE((unsigned)0, alignment);
@@ -1622,6 +1631,7 @@ TEST(LibRadosAioEC, RoundTripAppendPP) {
 }
 
 TEST(LibRadosAioEC, IsCompletePP) {
+  SKIP_IF_CRIMSON();
   AioTestDataECPP test_data;
   ASSERT_EQ("", test_data.init());
   auto my_completion = std::unique_ptr<AioCompletion>{Rados::aio_create_completion()};
@@ -1658,6 +1668,7 @@ TEST(LibRadosAioEC, IsCompletePP) {
   ASSERT_EQ(0, memcmp(buf, bl2.c_str(), sizeof(buf)));
 }
 TEST(LibRadosAioEC, IsSafePP) {
+  SKIP_IF_CRIMSON();
   AioTestDataECPP test_data;
   ASSERT_EQ("", test_data.init());
   auto my_completion = std::unique_ptr<AioCompletion>{Rados::aio_create_completion()};
@@ -1695,6 +1706,7 @@ TEST(LibRadosAioEC, IsSafePP) {
 }
 
 TEST(LibRadosAioEC, ReturnValuePP) {
+  SKIP_IF_CRIMSON();
   AioTestDataECPP test_data;
   ASSERT_EQ("", test_data.init());
   auto my_completion = std::unique_ptr<AioCompletion>{Rados::aio_create_completion()};
@@ -1710,6 +1722,7 @@ TEST(LibRadosAioEC, ReturnValuePP) {
 }
 
 TEST(LibRadosAioEC, FlushPP) {
+  SKIP_IF_CRIMSON();
   AioTestDataECPP test_data;
   ASSERT_EQ("", test_data.init());
   auto my_completion = std::unique_ptr<AioCompletion>{Rados::aio_create_completion()};
@@ -1737,6 +1750,7 @@ TEST(LibRadosAioEC, FlushPP) {
 }
 
 TEST(LibRadosAioEC, FlushAsyncPP) {
+  SKIP_IF_CRIMSON();
   AioTestDataECPP test_data;
   ASSERT_EQ("", test_data.init());
   auto my_completion = std::unique_ptr<AioCompletion>{Rados::aio_create_completion()};
@@ -1771,6 +1785,7 @@ TEST(LibRadosAioEC, FlushAsyncPP) {
 }
 
 TEST(LibRadosAioEC, RoundTripWriteFullPP) {
+  SKIP_IF_CRIMSON();
   AioTestDataECPP test_data;
   ASSERT_EQ("", test_data.init());
   auto my_completion = std::unique_ptr<AioCompletion>{Rados::aio_create_completion()};
@@ -1815,6 +1830,7 @@ TEST(LibRadosAioEC, RoundTripWriteFullPP) {
 //using ObjectWriteOperation/ObjectReadOperation with iohint
 TEST(LibRadosAioEC, RoundTripWriteFullPP2)
 {
+  SKIP_IF_CRIMSON();
   Rados cluster;
   std::string pool_name = get_temp_pool_name();
   ASSERT_EQ("", create_one_pool_pp(pool_name, cluster));
@@ -1855,6 +1871,7 @@ TEST(LibRadosAioEC, RoundTripWriteFullPP2)
 }
 
 TEST(LibRadosAioEC, SimpleStatPP) {
+  SKIP_IF_CRIMSON();
   AioTestDataECPP test_data;
   ASSERT_EQ("", test_data.init());
   auto my_completion = std::unique_ptr<AioCompletion>{Rados::aio_create_completion()};
@@ -1885,6 +1902,7 @@ TEST(LibRadosAioEC, SimpleStatPP) {
 }
 
 TEST(LibRadosAioEC, SimpleStatPPNS) {
+  SKIP_IF_CRIMSON();
   AioTestDataECPP test_data;
   ASSERT_EQ("", test_data.init());
   auto my_completion = std::unique_ptr<AioCompletion>{Rados::aio_create_completion()};
@@ -1915,6 +1933,7 @@ TEST(LibRadosAioEC, SimpleStatPPNS) {
 }
 
 TEST(LibRadosAioEC, StatRemovePP) {
+  SKIP_IF_CRIMSON();
   AioTestDataECPP test_data;
   ASSERT_EQ("", test_data.init());
   auto my_completion = std::unique_ptr<AioCompletion>{Rados::aio_create_completion()};
@@ -1965,6 +1984,7 @@ TEST(LibRadosAioEC, StatRemovePP) {
 }
 
 TEST(LibRadosAioEC, ExecuteClassPP) {
+  SKIP_IF_CRIMSON();
   AioTestDataECPP test_data;
   ASSERT_EQ("", test_data.init());
   auto my_completion = std::unique_ptr<AioCompletion>{Rados::aio_create_completion()};
@@ -1994,6 +2014,7 @@ TEST(LibRadosAioEC, ExecuteClassPP) {
 }
 
 TEST(LibRadosAioEC, OmapPP) {
+  SKIP_IF_CRIMSON();
   Rados cluster;
   std::string pool_name = get_temp_pool_name();
   ASSERT_EQ("", create_one_ec_pool_pp(pool_name, cluster));
@@ -2027,6 +2048,7 @@ TEST(LibRadosAioEC, OmapPP) {
 }
 
 TEST(LibRadosAioEC, MultiWritePP) {
+  SKIP_IF_CRIMSON();
   AioTestDataECPP test_data;
   ASSERT_EQ("", test_data.init());
   auto my_completion = std::unique_ptr<AioCompletion>{Rados::aio_create_completion()};
@@ -2229,4 +2251,134 @@ TEST(LibRadosAio, RoundTripCmpExtPP2)
 
   ioctx.remove("test_obj");
   destroy_one_pool_pp(pool_name, cluster);
+}
+
+ceph::mutex my_lock = ceph::make_mutex("my_lock");
+set<unsigned> inflight;
+unsigned max_success = 0;
+unsigned min_failed = 0;
+
+struct io_info {
+  unsigned i;
+  AioCompletion *c;
+};
+
+void pool_io_callback(completion_t cb, void *arg /* Actually AioCompletion* */)
+{
+  io_info *info = (io_info *)arg;
+  unsigned long i = info->i;
+  int r = info->c->get_return_value();
+  //cout << "finish " << i << " r = " << r << std::endl;
+
+  std::scoped_lock l(my_lock);
+  inflight.erase(i);
+  if (r == 0) {
+    if (i > max_success) {
+      max_success = i;
+    }
+  } else {
+    if (!min_failed || i < min_failed) {
+      min_failed = i;
+    }
+  }
+}
+
+TEST(LibRadosAio, PoolEIOFlag) {
+  AioTestDataPP test_data;
+  ASSERT_EQ("", test_data.init());
+
+  bufferlist bl;
+  bl.append("some data");
+  std::thread *t = nullptr;
+  
+  unsigned max = 100;
+  unsigned long i = 1;
+  my_lock.lock();
+  for (; min_failed == 0; ++i) {
+    io_info *info = new io_info;
+    info->i = i;
+    info->c = Rados::aio_create_completion();
+    info->c->set_complete_callback((void*)info, pool_io_callback);
+    inflight.insert(i);
+    my_lock.unlock();
+    int r = test_data.m_ioctx.aio_write("foo", info->c, bl, bl.length(), 0);
+    //cout << "start " << i << " r = " << r << std::endl;
+
+    if (i == max / 2) {
+      cout << "setting pool EIO" << std::endl;
+      t = new std::thread(
+	[&] {
+	  bufferlist empty;
+	  int r = test_data.m_cluster.mon_command(
+	    "{\"prefix\": \"osd pool set\", \"pool\": \"" + test_data.m_pool_name +
+	    "\", \"var\": \"eio\", \"val\": \"true\"}", empty, nullptr, nullptr);
+	  ceph_assert(r == 0);
+	});
+    }
+
+    std::this_thread::sleep_for(10'000us);
+    my_lock.lock();
+    if (r < 0) {
+      inflight.erase(i);
+      break;
+    }
+  }
+  t->join();
+  delete t;
+
+  // wait for ios to finish
+  for (; !inflight.empty(); ++i) {
+    cout << "waiting for " << inflight << std::endl;
+    my_lock.unlock();
+    sleep(1);
+    my_lock.lock();
+  }
+
+  cout << "max_success " << max_success << ", min_failed " << min_failed << std::endl;
+  ASSERT_TRUE(max_success + 1 == min_failed);
+  my_lock.unlock();
+}
+
+// This test case reproduces https://tracker.ceph.com/issues/57152
+TEST(LibRadosAio, MultiReads) {
+
+  // here we test multithreaded aio reads
+
+  AioTestDataPP test_data;
+  ASSERT_EQ("", test_data.init());
+  auto my_completion = std::unique_ptr<AioCompletion>{Rados::aio_create_completion()};
+  ASSERT_TRUE(my_completion);
+  char buf[128];
+  memset(buf, 0xcc, sizeof(buf));
+  bufferlist bl1;
+  bl1.append(buf, sizeof(buf));
+  ASSERT_EQ(0, test_data.m_ioctx.aio_write("foo", my_completion.get(),
+                                           bl1, sizeof(buf), 0));
+  {
+    TestAlarm alarm;
+    ASSERT_EQ(0, my_completion->wait_for_complete());
+  }
+  ASSERT_EQ(0, my_completion->get_return_value());
+
+  // Don't use std::vector to store bufferlists (e.g for parallelizing aio_reads),
+  // as they are being moved whenever the vector resizes
+  // and will cause invalidated references.
+  std::deque<std::pair<bufferlist, std::unique_ptr<AioCompletion>>> reads;
+  for (int i = 0; i < 100; i++) {
+    // std::deque is appropriate here as emplace_back() is obliged to
+    // preserve the referenced inserted element. (Unlike insert() or erase())
+    auto& [bl, aiocp] = reads.emplace_back();
+    aiocp = std::unique_ptr<AioCompletion>{Rados::aio_create_completion()};
+    ASSERT_TRUE(aiocp);
+    ASSERT_EQ(0, test_data.m_ioctx.aio_read("foo", aiocp.get(),
+                                            &bl, sizeof(buf), 0));
+  }
+  for (auto& [bl, aiocp] : reads) {
+    {
+      TestAlarm alarm;
+      ASSERT_EQ(0, aiocp->wait_for_complete());
+    }
+    ASSERT_EQ((int)sizeof(buf), aiocp->get_return_value());
+    ASSERT_EQ(0, memcmp(buf, bl.c_str(), sizeof(buf)));
+  }
 }

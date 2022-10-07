@@ -15,6 +15,7 @@
 #include "rgw/rgw_http_client.h"
 #include "global/global_init.h"
 #include "common/ceph_argparse.h"
+#include <unistd.h>
 #include <curl/curl.h>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/write.hpp>
@@ -23,14 +24,43 @@
 
 using namespace std;
 
+namespace {
+  using tcp = boost::asio::ip::tcp;
+
+  // if we have a racing where another thread manages to bind and listen the
+  // port picked by this acceptor, try again.
+  static constexpr int MAX_BIND_RETRIES = 60;
+
+  tcp::acceptor try_bind(boost::asio::io_context& ioctx) {
+    using tcp = boost::asio::ip::tcp;
+    tcp::endpoint endpoint(tcp::v4(), 0);
+    tcp::acceptor acceptor(ioctx);
+    acceptor.open(endpoint.protocol());
+    for (int retries = 0;; retries++) {
+      try {
+	acceptor.bind(endpoint);
+	// yay!
+	break;
+      } catch (const boost::system::system_error& e) {
+	if (retries == MAX_BIND_RETRIES) {
+	  throw;
+	}
+	if (e.code() != boost::system::errc::address_in_use) {
+	  throw;
+	}
+      }
+      // backoff a little bit
+      sleep(1);
+    }
+    return acceptor;
+  }
+}
+
 TEST(HTTPManager, ReadTruncated)
 {
   using tcp = boost::asio::ip::tcp;
-  tcp::endpoint endpoint(tcp::v4(), 0);
   boost::asio::io_context ioctx;
-  tcp::acceptor acceptor(ioctx);
-  acceptor.open(endpoint.protocol());
-  acceptor.bind(endpoint);
+  auto acceptor = try_bind(ioctx);
   acceptor.listen();
 
   std::thread server{[&] {
@@ -54,11 +84,8 @@ TEST(HTTPManager, ReadTruncated)
 TEST(HTTPManager, Head)
 {
   using tcp = boost::asio::ip::tcp;
-  tcp::endpoint endpoint(tcp::v4(), 0);
   boost::asio::io_context ioctx;
-  tcp::acceptor acceptor(ioctx);
-  acceptor.open(endpoint.protocol());
-  acceptor.bind(endpoint);
+  auto acceptor = try_bind(ioctx);
   acceptor.listen();
 
   std::thread server{[&] {
@@ -105,9 +132,7 @@ TEST(HTTPManager, SignalThread)
 
 int main(int argc, char** argv)
 {
-  vector<const char*> args;
-  argv_to_vec(argc, (const char **)argv, args);
-
+  auto args = argv_to_vec(argc, argv);
   auto cct = global_init(NULL, args, CEPH_ENTITY_TYPE_CLIENT,
 			 CODE_ENVIRONMENT_UTILITY,
 			 CINIT_FLAG_NO_DEFAULT_CONFIG_FILE);

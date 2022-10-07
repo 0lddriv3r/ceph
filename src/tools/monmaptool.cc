@@ -182,8 +182,7 @@ bool handle_features(list<feature_op_t>& lst, MonMap &m)
 
 int main(int argc, const char **argv)
 {
-  vector<const char*> args;
-  argv_to_vec(argc, argv, args);
+  auto args = argv_to_vec(argc, argv);
   if (args.empty()) {
     cerr << argv[0] << ": -h or --help for usage" << std::endl;
     exit(1);
@@ -359,7 +358,7 @@ int main(int argc, const char **argv)
     monmap.strategy = static_cast<MonMap::election_strategy>(
 		  g_conf().get_val<uint64_t>("mon_election_default_strategy"));
     if (min_mon_release == ceph_release_t::unknown) {
-      min_mon_release = ceph_release_t::octopus;
+      min_mon_release = ceph_release_t::pacific;
     }
     // TODO: why do we not use build_initial in our normal path here!?!?!
     modified = true;

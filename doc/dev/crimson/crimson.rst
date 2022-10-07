@@ -22,14 +22,46 @@ Crimson is not enabled by default. To enable it::
 Please note, `ASan`_ is enabled by default if crimson is built from a source
 cloned using git.
 
-Also, Seastar uses its own lockless allocator which does not play well with
-the alien threads. So, to use alienstore / bluestore backend, you might want to
-pass ``-DSeastar_CXX_FLAGS=-DSEASTAR_DEFAULT_ALLOCATOR`` to ``cmake`` when
-configuring this project to use the libc allocator, like::
-
-  $ cmake -DWITH_SEASTAR=ON -DSeastar_CXX_FLAGS=-DSEASTAR_DEFAULT_ALLOCATOR ..
-
 .. _ASan: https://github.com/google/sanitizers/wiki/AddressSanitizer
+
+Installing Crimson with ready-to-use images
+===========================================
+
+An alternative to building Crimson from source is to use container images built
+by Ceph CI/CD and deploy them with one of the orchestrators: ``cephadm`` or ``Rook``.
+In this chapter documents the ``cephadm`` way.
+
+NOTE: We know that this procedure is suboptimal, but it has passed internal
+external quality assurance.::
+
+
+  $ curl -L https://raw.githubusercontent.com/ceph/ceph-ci/wip-bharat-crimson/src/cephadm/cephadm -o cephadm
+  $ cp cephadm /usr/sbin
+  $ vi /usr/sbin/cephadm
+
+In the file change ``DEFAULT_IMAGE = 'quay.ceph.io/ceph-ci/ceph:master'``
+to ``DEFAULT_IMAGE = 'quay.ceph.io/ceph-ci/ceph:<sha1>-crimson`` where ``<sha1>``
+is the commit ID built by the Ceph CI/CD. You may use
+https://shaman.ceph.com/builds/ceph/ to monitor branches built by Ceph's Jenkins
+and to also discover those IDs.
+
+An example::
+
+  DEFAULT_IMAGE = 'quay.ceph.io/ceph-ci/ceph:1647216bf4ebac6bcf5ad7739e02b38569736cfd-crimson
+
+When the edition is finished::
+
+  chmod 777 cephadm
+  podman pull quay.ceph.io/ceph-ci/ceph:<sha1>-crimson
+  cephadm bootstrap --mon-ip 10.1.172.208 --allow-fqdn-hostname
+  # Set "PermitRootLogin yes" for other nodes you want to use
+  echo 'PermitRootLogin yes' >>  /etc/ssh/sshd_config
+  systemctl restart sshd
+
+  ssh-copy-id -f -i /etc/ceph/ceph.pub root@<nodename>
+  cephadm shell
+  ceph orch host add <nodename>
+  ceph orch apply osd --all-available-devices
 
 Running Crimson
 ===============
@@ -153,7 +185,7 @@ So, a typical command to start a single-crimson-node cluster is::
 
   $  MGR=1 MON=1 OSD=1 MDS=0 RGW=0 ../src/vstart.sh -n -x \
     --without-dashboard --cyanstore \
-    --crimson --nodaemon --redirect-output \
+    --crimson --redirect-output \
     --osd-args "--memory 4G"
 
 Where we assign 4 GiB memory, a single thread running on core-0 to crimson-osd.
@@ -171,7 +203,7 @@ pg stats reported to mgr
 ------------------------
 
 Crimson collects the per-pg, per-pool, and per-osd stats in a `MPGStats`
-messsage, and send it over to mgr, so that the mgr modules can query
+message, and send it over to mgr, so that the mgr modules can query
 them using the `MgrModule.get()` method.
 
 asock command
@@ -342,7 +374,7 @@ Debugging with GDB
 
 The `tips`_ for debugging Scylla also apply to Crimson.
 
-.. _tips: https://github.com/scylladb/scylla/blob/master/docs/guides/debugging.md#tips-and-tricks
+.. _tips: https://github.com/scylladb/scylla/blob/master/docs/dev/debugging.md#tips-and-tricks
 
 Human-readable backtraces with addr2line
 ----------------------------------------

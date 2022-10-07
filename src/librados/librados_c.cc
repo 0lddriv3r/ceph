@@ -317,8 +317,7 @@ extern "C" int LIBRADOS_C_API_DEFAULT_F(rados_conf_parse_argv)(
   }
   librados::RadosClient *client = (librados::RadosClient *)cluster;
   auto& conf = client->cct->_conf;
-  vector<const char*> args;
-  argv_to_vec(argc, argv, args);
+  auto args = argv_to_vec(argc, argv);
   int ret = conf.parse_argv(args);
   if (ret) {
     tracepoint(librados, rados_conf_parse_argv_exit, ret);
@@ -456,7 +455,7 @@ extern "C" int LIBRADOS_C_API_DEFAULT_F(rados_pool_reverse_lookup)(
   tracepoint(librados, rados_pool_reverse_lookup_enter, cluster, id, maxlen);
   librados::RadosClient *radosp = (librados::RadosClient *)cluster;
   std::string name;
-  int r = radosp->pool_get_name(id, &name);
+  int r = radosp->pool_get_name(id, &name, true);
   if (r < 0) {
     tracepoint(librados, rados_pool_reverse_lookup_exit, r, "");
     return r;
@@ -1175,7 +1174,9 @@ extern "C" void LIBRADOS_C_API_DEFAULT_F(rados_ioctx_destroy)(rados_ioctx_t io)
 {
   tracepoint(librados, rados_ioctx_destroy_enter, io);
   librados::IoCtxImpl *ctx = (librados::IoCtxImpl *)io;
-  ctx->put();
+  if (ctx) {
+    ctx->put();
+  }
   tracepoint(librados, rados_ioctx_destroy_exit);
 }
 LIBRADOS_C_API_BASE_DEFAULT(rados_ioctx_destroy);
@@ -1608,7 +1609,7 @@ LIBRADOS_C_API_BASE_DEFAULT(rados_ioctx_pool_requires_alignment);
 
 extern "C" int LIBRADOS_C_API_DEFAULT_F(rados_ioctx_pool_requires_alignment2)(
   rados_ioctx_t io,
-  int *requires)
+  int *req)
 {
   tracepoint(librados, rados_ioctx_pool_requires_alignment_enter2, io);
   librados::IoCtxImpl *ctx = (librados::IoCtxImpl *)io;
@@ -1617,8 +1618,8 @@ extern "C" int LIBRADOS_C_API_DEFAULT_F(rados_ioctx_pool_requires_alignment2)(
   	&requires_alignment);
   tracepoint(librados, rados_ioctx_pool_requires_alignment_exit2, retval, 
   	requires_alignment);
-  if (requires)
-    *requires = requires_alignment;
+  if (req)
+    *req = requires_alignment;
   return retval;
 }
 LIBRADOS_C_API_BASE_DEFAULT(rados_ioctx_pool_requires_alignment2);
@@ -2108,6 +2109,21 @@ extern "C" int LIBRADOS_C_API_DEFAULT_F(rados_stat)(
   return retval;
 }
 LIBRADOS_C_API_BASE_DEFAULT(rados_stat);
+
+extern "C" int LIBRADOS_C_API_DEFAULT_F(rados_stat2)(
+  rados_ioctx_t io,
+  const char *o,
+  uint64_t *psize,
+  struct timespec *pmtime)
+{
+  tracepoint(librados, rados_stat2_enter, io, o);
+  librados::IoCtxImpl *ctx = (librados::IoCtxImpl *)io;
+  object_t oid(o);
+  int retval = ctx->stat2(oid, psize, pmtime);
+  tracepoint(librados, rados_stat2_exit, retval, psize, pmtime);
+  return retval;
+}
+LIBRADOS_C_API_BASE_DEFAULT(rados_stat2);
 
 extern "C" int LIBRADOS_C_API_BASE_F(rados_tmap_update)(
   rados_ioctx_t io,
@@ -2992,6 +3008,21 @@ extern "C" int LIBRADOS_C_API_DEFAULT_F(rados_aio_stat)(
   return retval;
 }
 LIBRADOS_C_API_BASE_DEFAULT(rados_aio_stat);
+
+extern "C" int LIBRADOS_C_API_DEFAULT_F(rados_aio_stat2)(
+  rados_ioctx_t io, const char *o,
+  rados_completion_t completion,
+  uint64_t *psize, struct timespec *pmtime)
+{
+  tracepoint(librados, rados_aio_stat2_enter, io, o, completion);
+  librados::IoCtxImpl *ctx = (librados::IoCtxImpl *)io;
+  object_t oid(o);
+  int retval = ctx->aio_stat2(oid, (librados::AioCompletionImpl*)completion,
+		       psize, pmtime);
+  tracepoint(librados, rados_aio_stat2_exit, retval);
+  return retval;
+}
+LIBRADOS_C_API_BASE_DEFAULT(rados_aio_stat2);
 
 extern "C" int LIBRADOS_C_API_DEFAULT_F(rados_aio_cmpext)(
   rados_ioctx_t io, const char *o,
@@ -4144,6 +4175,18 @@ extern "C" void LIBRADOS_C_API_DEFAULT_F(rados_read_op_stat)(
   tracepoint(librados, rados_read_op_stat_exit);
 }
 LIBRADOS_C_API_BASE_DEFAULT(rados_read_op_stat);
+
+extern "C" void LIBRADOS_C_API_DEFAULT_F(rados_read_op_stat2)(
+  rados_read_op_t read_op,
+  uint64_t *psize,
+  struct timespec *pmtime,
+  int *prval)
+{
+  tracepoint(librados, rados_read_op_stat2_enter, read_op, psize, pmtime, prval);
+  ((::ObjectOperation *)read_op)->stat(psize, pmtime, prval);
+  tracepoint(librados, rados_read_op_stat2_exit);
+}
+LIBRADOS_C_API_BASE_DEFAULT(rados_read_op_stat2);
 
 class C_bl_to_buf : public Context {
   char *out_buf;

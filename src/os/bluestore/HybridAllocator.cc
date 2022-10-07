@@ -3,6 +3,7 @@
 
 #include "HybridAllocator.h"
 
+#include <bit>
 #include <limits>
 
 #include "common/config_proxy.h"
@@ -27,7 +28,7 @@ int64_t HybridAllocator::allocate(
                  << " max_alloc_size 0x" << max_alloc_size
                  << " hint 0x" << hint
                  << std::dec << dendl;
-  ceph_assert(isp2(unit));
+  ceph_assert(std::has_single_bit(unit));
   ceph_assert(want % unit == 0);
 
   if (max_alloc_size == 0) {
@@ -145,11 +146,13 @@ void HybridAllocator::dump()
     << dendl;
 }
 
-void HybridAllocator::dump(std::function<void(uint64_t offset, uint64_t length)> notify)
+void HybridAllocator::foreach(
+  std::function<void(uint64_t offset, uint64_t length)> notify)
 {
-  AvlAllocator::dump(notify);
+  std::lock_guard l(lock);
+  AvlAllocator::_foreach(notify);
   if (bmap_alloc) {
-    bmap_alloc->dump(notify);
+    bmap_alloc->foreach(notify);
   }
 }
 
@@ -168,7 +171,7 @@ void HybridAllocator::init_rm_free(uint64_t offset, uint64_t length)
         if (bmap_alloc) {
           bmap_alloc->init_rm_free(o, l);
         } else {
-          lderr(cct) << "init_rm_free lambda" << std::hex
+          lderr(cct) << "init_rm_free lambda " << std::hex
             << "Uexpected extent: "
             << " 0x" << o << "~" << l
             << std::dec << dendl;

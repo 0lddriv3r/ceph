@@ -2,26 +2,51 @@
  Documenting Ceph
 ==================
 
-The **easiest way** to help the Ceph project is to contribute to the
-documentation. As the Ceph user base grows and the development pace quickens, an
-increasing number of people are updating the documentation and adding new
-information. Even small contributions like fixing spelling errors or clarifying
-instructions will help the Ceph project immensely.
+You can help the Ceph project by contributing to the documentation.  Even
+small contributions help the Ceph project, such as fixing
+spelling errors or rewriting confusing instructions.
 
-The Ceph documentation source resides in the ``ceph/doc`` directory of the Ceph
-repository, and Python Sphinx renders the source into HTML and manpages. The
-https://docs.ceph.com link currently displays the ``master`` branch by default,
-but you may view documentation for older branches (e.g., ``mimic``) by substituting
-``latest`` in the URL with the branch name you prefer.
+The easiest way to suggest a correction to the documentation is to send an
+email to `ceph-users@ceph.io`. Include the string "ATTN: DOCS" or
+"Attention: Docs" or "Attention: Documentation" in the subject line.  In
+the body of the email, include the text to be corrected (so that I can find
+it in the repo) and include your correction.
 
+Another way to suggest a documentation correction is to make a pull request.
+The instructions for making a pull request against the Ceph documentation are
+in the section :ref:`making_contributions`.
+
+If this is your first time making an improvement to the documentation or
+if you have noticed a small mistake (such as a spelling error or a typo),
+it will be easier to send an email than to make a pull request. You will
+be credited for the improvement unless you instruct Ceph Upstream
+Documentation not to credit you.
+
+Location of the Documentation in the Repository
+===============================================
+
+The Ceph documentation source is in the ``ceph/doc`` directory of the Ceph
+repository. Python Sphinx renders the source into HTML and manpages. 
+
+Viewing Old Ceph Documentation
+==============================
+The https://docs.ceph.com link displays the latest release branch by default
+(for example, if "Quincy" is the most recent release, then by default
+https://docs.ceph.com displays the documentation for Quincy), but you can view
+the documentation for older versions of Ceph (for example, ``pacific``) by
+replacing the version name in the url (for example, ``quincy`` in
+`https://docs.ceph.com/en/pacific <https://docs.ceph.com/en/quincy>`_) with the
+branch name you prefer (for example, ``pacific``, to create a URL that reads
+`https://docs.ceph.com/en/pacific/ <https://docs.ceph.com/en/pacific/>`_).
+
+.. _making_contributions:
 
 Making Contributions
 ====================
 
-Making a documentation contribution generally involves the same procedural
-sequence as making a code contribution, except that you must build documentation
-source instead of compiling program source. The sequence includes the following
-steps:
+Making a documentation contribution involves the same basic procedure as making
+a code contribution, with one exception: you must build documentation source
+instead of compiling program source. This sequence (the sequence of building the documentation source) includes the following steps:
 
 #. `Get the Source`_
 #. `Select a Branch`_
@@ -117,13 +142,13 @@ Select a Branch
 ---------------
 
 When you make small changes to the documentation, such as fixing typographical
-errors or clarifying explanations, use the ``master`` branch (default). You
-should also use the ``master`` branch when making contributions to features that
-are in the current release. ``master`` is the most commonly used branch. :
+errors or clarifying explanations, use the ``main`` branch (default). You
+should also use the ``main`` branch when making contributions to features that
+are in the current release. ``main`` is the most commonly used branch. :
 
 .. prompt:: bash $
 
-	git checkout master
+	git checkout main
 
 When you make changes to documentation that affect an upcoming release, use 
 the ``next`` branch. ``next`` is the second most commonly used branch. :
@@ -135,7 +160,7 @@ the ``next`` branch. ``next`` is the second most commonly used branch. :
 When you are making substantial contributions such as new features that are not
 yet in the current release; if your contribution is related to an issue with a
 tracker ID; or, if you want to see your documentation rendered on the Ceph.com
-website before it gets merged into the ``master`` branch, you should create a
+website before it gets merged into the ``main`` branch, you should create a
 branch. To distinguish branches that include only documentation updates, we
 prepend them with ``wip-doc`` by convention, following the form
 ``wip-doc-{your-branch-name}``. If the branch relates to an issue filed in
@@ -273,7 +298,7 @@ the following packages are required:
 - python3-dev
 - python3-pip
 - python3-sphinx
-- pytnon3-venv
+- python3-venv
 - libxml2-dev
 - libxslt1-dev
 - doxygen
@@ -326,7 +351,7 @@ distributions, execute the following:
 
 .. prompt:: bash $
 
-	sudo apt-get install gcc python-dev python-pip libxml2-dev libxslt-dev doxygen graphviz ant ditaa
+	sudo apt-get install gcc python-dev python3-pip libxml2-dev libxslt-dev doxygen graphviz ant ditaa
 	sudo apt-get install python-sphinx
 
 For Fedora distributions, execute the following:
@@ -411,7 +436,7 @@ Ceph documentation commits are simple, but follow a strict convention:
 - The comment summary MUST be one line only. (strict)
 - Additional comments MAY follow a blank line after the summary, 
   but should be terse.
-- A commit MAY include ``Fixes: #{bug number}``.
+- A commit MAY include ``Fixes: https://tracker.ceph.com/issues/{bug number}``.
 - Commits MUST include ``Signed-off-by: Firstname Lastname <email>``. (strict)
 
 .. tip:: Follow the foregoing convention particularly where it says 
@@ -429,7 +454,7 @@ The following comment includes a reference to a bug. ::
 
 	doc: Fixes a spelling error and a broken hyperlink.
 
-	Fixes: #1234
+	Fixes: https://tracker.ceph.com/issues/1234
 	
 	Signed-off-by: John Doe <john.doe@gmail.com>
 
@@ -510,15 +535,14 @@ Pull`_ approach.
 Notify Us
 ---------
 
-After you make a pull request, please email ceph-docs@redhat.com.
-
-
+In case The PR did not got a review within in a reasonable timeframe, please get in touch
+with the corresponding component lead :ref:`ctl`.
 
 Documentation Style Guide
 =========================
 
 One objective of the Ceph documentation project is to ensure the readability of
-the documentation in both native restructuredText format and its rendered
+the documentation in both native reStructuredText format and its rendered
 formats such as HTML. Navigate to your Ceph repository and view a document in
 its native format. You may notice that it is generally as legible in a terminal
 as it is in its rendered HTML format. Additionally, you may also notice that
@@ -645,7 +669,7 @@ improves the readability of the document in a command line interface.
 
 
 .. _Python Sphinx: http://sphinx-doc.org
-.. _resturcturedText: http://docutils.sourceforge.net/rst.html
+.. _restructuredText: http://docutils.sourceforge.net/rst.html
 .. _Fork and Pull: https://help.github.com/articles/using-pull-requests
 .. _github: http://github.com
 .. _ditaa: http://ditaa.sourceforge.net/

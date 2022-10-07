@@ -5,6 +5,8 @@
 
 #include "crimson/os/seastore/onode_manager/staged-fltree/fltree_onode_manager.h"
 
+SET_SUBSYS(seastore_onode);
+
 namespace crimson::os::seastore::onode {
 
 FLTreeOnodeManager::contains_onode_ret FLTreeOnodeManager::contains_onode(
@@ -27,7 +29,10 @@ FLTreeOnodeManager::get_onode_ret FLTreeOnodeManager::get_onode(
       DEBUGT("no entry for {}", trans, hoid);
       return crimson::ct_error::enoent::make();
     }
-    auto val = OnodeRef(new FLTreeOnode(cursor.value()));
+    auto val = OnodeRef(new FLTreeOnode(
+	default_data_reservation,
+	default_metadata_range,
+	cursor.value()));
     return get_onode_iertr::make_ready_future<OnodeRef>(
       val
     );
@@ -43,10 +48,13 @@ FLTreeOnodeManager::get_or_create_onode(
   return tree.insert(
     trans, hoid,
     OnodeTree::tree_value_config_t{sizeof(onode_layout_t)}
-  ).si_then([&trans, &hoid, FNAME](auto p)
+  ).si_then([this, &trans, &hoid, FNAME](auto p)
               -> get_or_create_onode_ret {
     auto [cursor, created] = std::move(p);
-    auto val = OnodeRef(new FLTreeOnode(cursor.value()));
+    auto val = OnodeRef(new FLTreeOnode(
+	default_data_reservation,
+	default_metadata_range,
+	cursor.value()));
     if (created) {
       DEBUGT("created onode for entry for {}", trans, hoid);
       val->get_mutable_layout(trans) = onode_layout_t{};
@@ -130,8 +138,11 @@ FLTreeOnodeManager::list_onodes_ret FLTreeOnodeManager::list_onodes(
       return trans_intr::repeat(
           [this, &trans, end, &to_list, &current_cursor, &ret] ()
           -> eagain_ifuture<seastar::stop_iteration> {
-        if (current_cursor.is_end() ||
-            current_cursor.get_ghobj() >= end) {
+        if (current_cursor.is_end()) {
+          std::get<1>(ret) = ghobject_t::get_max();
+          return seastar::make_ready_future<seastar::stop_iteration>(
+            seastar::stop_iteration::yes);
+        } else if (current_cursor.get_ghobj() >= end) {
           std::get<1>(ret) = end;
           return seastar::make_ready_future<seastar::stop_iteration>(
             seastar::stop_iteration::yes);

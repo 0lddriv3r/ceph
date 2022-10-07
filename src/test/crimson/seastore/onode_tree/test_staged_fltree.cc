@@ -67,23 +67,23 @@ namespace {
   std::pair<key_view_t, void*> build_key_view(const ghobject_t& hobj) {
     key_hobj_t key_hobj(hobj);
     size_t key_size = sizeof(shard_pool_crush_t) + sizeof(snap_gen_t) +
-                      ns_oid_view_t::estimate_size<KeyT::HOBJ>(key_hobj);
+                      ns_oid_view_t::estimate_size(key_hobj);
     void* p_mem = std::malloc(key_size);
 
     key_view_t key_view;
     char* p_fill = (char*)p_mem + key_size;
 
-    auto spc = shard_pool_crush_t::from_key<KeyT::HOBJ>(key_hobj);
+    auto spc = shard_pool_crush_t::from_key(key_hobj);
     p_fill -= sizeof(shard_pool_crush_t);
     std::memcpy(p_fill, &spc, sizeof(shard_pool_crush_t));
     key_view.set(*reinterpret_cast<const shard_pool_crush_t*>(p_fill));
 
     auto p_ns_oid = p_fill;
-    ns_oid_view_t::test_append<KeyT::HOBJ>(key_hobj, p_fill);
+    ns_oid_view_t::test_append(key_hobj, p_fill);
     ns_oid_view_t ns_oid_view(p_ns_oid);
     key_view.set(ns_oid_view);
 
-    auto sg = snap_gen_t::from_key<KeyT::HOBJ>(key_hobj);
+    auto sg = snap_gen_t::from_key(key_hobj);
     p_fill -= sizeof(snap_gen_t);
     ceph_assert(p_fill == (char*)p_mem);
     std::memcpy(p_fill, &sg, sizeof(snap_gen_t));
@@ -139,24 +139,24 @@ TEST_F(a_basic_test_t, 1_basic_sizes)
     "  LeafNode1: {} {} {}\n"
     "  LeafNode2: {} {}\n"
     "  LeafNode3: {}",
-    _STAGE_T(InternalNode0)::template insert_size<KeyT::VIEW>(key_view, i_value),
-    NXT_T(_STAGE_T(InternalNode0))::template insert_size<KeyT::VIEW>(key_view, i_value),
-    NXT_T(NXT_T(_STAGE_T(InternalNode0)))::template insert_size<KeyT::VIEW>(key_view, i_value),
-    _STAGE_T(InternalNode1)::template insert_size<KeyT::VIEW>(key_view, i_value),
-    NXT_T(_STAGE_T(InternalNode1))::template insert_size<KeyT::VIEW>(key_view, i_value),
-    NXT_T(NXT_T(_STAGE_T(InternalNode1)))::template insert_size<KeyT::VIEW>(key_view, i_value),
-    _STAGE_T(InternalNode2)::template insert_size<KeyT::VIEW>(key_view, i_value),
-    NXT_T(_STAGE_T(InternalNode2))::template insert_size<KeyT::VIEW>(key_view, i_value),
-    _STAGE_T(InternalNode3)::template insert_size<KeyT::VIEW>(key_view, i_value),
-    _STAGE_T(LeafNode0)::template insert_size<KeyT::HOBJ>(key, value),
-    NXT_T(_STAGE_T(LeafNode0))::template insert_size<KeyT::HOBJ>(key, value),
-    NXT_T(NXT_T(_STAGE_T(LeafNode0)))::template insert_size<KeyT::HOBJ>(key, value),
-    _STAGE_T(LeafNode1)::template insert_size<KeyT::HOBJ>(key, value),
-    NXT_T(_STAGE_T(LeafNode1))::template insert_size<KeyT::HOBJ>(key, value),
-    NXT_T(NXT_T(_STAGE_T(LeafNode1)))::template insert_size<KeyT::HOBJ>(key, value),
-    _STAGE_T(LeafNode2)::template insert_size<KeyT::HOBJ>(key, value),
-    NXT_T(_STAGE_T(LeafNode2))::template insert_size<KeyT::HOBJ>(key, value),
-    _STAGE_T(LeafNode3)::template insert_size<KeyT::HOBJ>(key, value)
+    _STAGE_T(InternalNode0)::insert_size(key_view, i_value),
+    NXT_T(_STAGE_T(InternalNode0))::insert_size(key_view, i_value),
+    NXT_T(NXT_T(_STAGE_T(InternalNode0)))::insert_size(key_view, i_value),
+    _STAGE_T(InternalNode1)::insert_size(key_view, i_value),
+    NXT_T(_STAGE_T(InternalNode1))::insert_size(key_view, i_value),
+    NXT_T(NXT_T(_STAGE_T(InternalNode1)))::insert_size(key_view, i_value),
+    _STAGE_T(InternalNode2)::insert_size(key_view, i_value),
+    NXT_T(_STAGE_T(InternalNode2))::insert_size(key_view, i_value),
+    _STAGE_T(InternalNode3)::insert_size(key_view, i_value),
+    _STAGE_T(LeafNode0)::insert_size(key, value),
+    NXT_T(_STAGE_T(LeafNode0))::insert_size(key, value),
+    NXT_T(NXT_T(_STAGE_T(LeafNode0)))::insert_size(key, value),
+    _STAGE_T(LeafNode1)::insert_size(key, value),
+    NXT_T(_STAGE_T(LeafNode1))::insert_size(key, value),
+    NXT_T(NXT_T(_STAGE_T(LeafNode1)))::insert_size(key, value),
+    _STAGE_T(LeafNode2)::insert_size(key, value),
+    NXT_T(_STAGE_T(LeafNode2))::insert_size(key, value),
+    _STAGE_T(LeafNode3)::insert_size(key, value)
   );
   std::free(p_mem);
 }
@@ -198,26 +198,27 @@ TEST_F(a_basic_test_t, 2_node_sizes)
 }
 
 struct b_dummy_tree_test_t : public seastar_test_suite_t {
-  NodeExtentManagerURef moved_nm;
   TransactionRef ref_t;
-  Transaction& t;
-  ValueBuilderImpl<UnboundedValue> vb;
-  context_t c;
-  UnboundedBtree tree;
+  std::unique_ptr<UnboundedBtree> tree;
 
-  b_dummy_tree_test_t()
-    : moved_nm{NodeExtentManager::create_dummy(IS_DUMMY_SYNC)},
-      ref_t{make_test_transaction()},
-      t{*ref_t},
-      c{*moved_nm, vb, t},
-      tree{std::move(moved_nm)} {}
+  b_dummy_tree_test_t() = default;
 
   seastar::future<> set_up_fut() override final {
-    return INTR(tree.mkfs, t).handle_error(
+    ref_t = make_test_transaction();
+    tree.reset(
+      new UnboundedBtree(NodeExtentManager::create_dummy(IS_DUMMY_SYNC))
+    );
+    return INTR(tree->mkfs, *ref_t).handle_error(
       crimson::ct_error::all_same_way([] {
         ASSERT_FALSE("Unable to mkfs");
       })
     );
+  }
+
+  seastar::future<> tear_down_fut() final {
+    ref_t.reset();
+    tree.reset();
+    return seastar::now();
   }
 };
 
@@ -228,9 +229,9 @@ TEST_F(b_dummy_tree_test_t, 3_random_insert_erase_leaf_node)
                   "\nrandomized leaf node insert:\n");
     auto key_s = ghobject_t();
     auto key_e = ghobject_t::get_max();
-    ASSERT_TRUE(INTR_R(tree.find, t, key_s).unsafe_get0().is_end());
-    ASSERT_TRUE(INTR(tree.begin, t).unsafe_get0().is_end());
-    ASSERT_TRUE(INTR(tree.last, t).unsafe_get0().is_end());
+    ASSERT_TRUE(INTR_R(tree->find, *ref_t, key_s).unsafe_get0().is_end());
+    ASSERT_TRUE(INTR(tree->begin, *ref_t).unsafe_get0().is_end());
+    ASSERT_TRUE(INTR(tree->last, *ref_t).unsafe_get0().is_end());
 
     std::map<ghobject_t,
              std::tuple<test_item_t, UnboundedBtree::Cursor>> insert_history;
@@ -238,24 +239,24 @@ TEST_F(b_dummy_tree_test_t, 3_random_insert_erase_leaf_node)
     auto f_validate_insert_new = [this, &insert_history] (
         const ghobject_t& key, const test_item_t& value) {
       auto conf = UnboundedBtree::tree_value_config_t{value.get_payload_size()};
-      auto [cursor, success] = INTR_R(tree.insert,
-          t, key, conf).unsafe_get0();
-      initialize_cursor_from_item(t, key, value, cursor, success);
+      auto [cursor, success] = INTR_R(tree->insert,
+          *ref_t, key, conf).unsafe_get0();
+      initialize_cursor_from_item(*ref_t, key, value, cursor, success);
       insert_history.emplace(key, std::make_tuple(value, cursor));
-      auto cursor_ = INTR_R(tree.find, t, key).unsafe_get0();
-      ceph_assert(cursor_ != tree.end());
+      auto cursor_ = INTR_R(tree->find, *ref_t, key).unsafe_get0();
+      ceph_assert(cursor_ != tree->end());
       ceph_assert(cursor_.value() == cursor.value());
       validate_cursor_from_item(key, value, cursor_);
       return cursor.value();
     };
 
     auto f_validate_erase = [this, &insert_history] (const ghobject_t& key) {
-      auto cursor_erase = INTR_R(tree.find, t, key).unsafe_get0();
-      auto cursor_next = INTR(cursor_erase.get_next, t).unsafe_get0();
-      auto cursor_ret = INTR_R(tree.erase, t, cursor_erase).unsafe_get0();
+      auto cursor_erase = INTR_R(tree->find, *ref_t, key).unsafe_get0();
+      auto cursor_next = INTR(cursor_erase.get_next, *ref_t).unsafe_get0();
+      auto cursor_ret = INTR_R(tree->erase, *ref_t, cursor_erase).unsafe_get0();
       ceph_assert(cursor_erase.is_end());
       ceph_assert(cursor_ret == cursor_next);
-      auto cursor_lb = INTR_R(tree.lower_bound, t, key).unsafe_get0();
+      auto cursor_lb = INTR_R(tree->lower_bound, *ref_t, key).unsafe_get0();
       ceph_assert(cursor_lb == cursor_next);
       auto it = insert_history.find(key);
       ceph_assert(std::get<1>(it->second).is_end());
@@ -278,10 +279,10 @@ TEST_F(b_dummy_tree_test_t, 3_random_insert_erase_leaf_node)
 
     // validate lookup
     {
-      auto cursor1_s = INTR_R(tree.lower_bound, t, key_s).unsafe_get0();
+      auto cursor1_s = INTR_R(tree->lower_bound, *ref_t, key_s).unsafe_get0();
       ASSERT_EQ(cursor1_s.get_ghobj(), key1);
       ASSERT_EQ(cursor1_s.value(), test_value1);
-      auto cursor1_e = INTR_R(tree.lower_bound, t, key_e).unsafe_get0();
+      auto cursor1_e = INTR_R(tree->lower_bound, *ref_t, key_e).unsafe_get0();
       ASSERT_TRUE(cursor1_e.is_end());
     }
 
@@ -289,8 +290,8 @@ TEST_F(b_dummy_tree_test_t, 3_random_insert_erase_leaf_node)
     {
       auto value1_dup = values.pick();
       auto conf = UnboundedBtree::tree_value_config_t{value1_dup.get_payload_size()};
-      auto [cursor1_dup, ret1_dup] = INTR_R(tree.insert,
-          t, key1, conf).unsafe_get0();
+      auto [cursor1_dup, ret1_dup] = INTR_R(tree->insert,
+          *ref_t, key1, conf).unsafe_get0();
       ASSERT_FALSE(ret1_dup);
       validate_cursor_from_item(key1, value1, cursor1_dup);
     }
@@ -367,34 +368,34 @@ TEST_F(b_dummy_tree_test_t, 3_random_insert_erase_leaf_node)
       {make_ghobj(4, 4, 4, "ns4", "oid4", 4, 4), values.pick()}};
     auto [smallest_key, smallest_value] = kvs[0];
     auto [largest_key, largest_value] = kvs[kvs.size() - 1];
-    std::random_shuffle(kvs.begin(), kvs.end());
+    std::shuffle(kvs.begin(), kvs.end(), std::default_random_engine{});
     std::for_each(kvs.begin(), kvs.end(), [&f_insert_erase_insert] (auto& kv) {
       f_insert_erase_insert(kv.first, kv.second);
     });
-    ASSERT_EQ(INTR(tree.height, t).unsafe_get0(), 1);
-    ASSERT_FALSE(tree.test_is_clean());
+    ASSERT_EQ(INTR(tree->height, *ref_t).unsafe_get0(), 1);
+    ASSERT_FALSE(tree->test_is_clean());
 
     for (auto& [k, val] : insert_history) {
       auto& [v, c] = val;
       // validate values in tree keep intact
-      auto cursor = with_trans_intr(t, [this, &k=k](auto& tr) {
-        return tree.find(tr, k);
+      auto cursor = with_trans_intr(*ref_t, [this, &k=k](auto& tr) {
+        return tree->find(tr, k);
       }).unsafe_get0();
-      EXPECT_NE(cursor, tree.end());
+      EXPECT_NE(cursor, tree->end());
       validate_cursor_from_item(k, v, cursor);
       // validate values in cursors keep intact
       validate_cursor_from_item(k, v, c);
     }
     {
-      auto cursor = INTR_R(tree.lower_bound, t, key_s).unsafe_get0();
+      auto cursor = INTR_R(tree->lower_bound, *ref_t, key_s).unsafe_get0();
       validate_cursor_from_item(smallest_key, smallest_value, cursor);
     }
     {
-      auto cursor = INTR(tree.begin, t).unsafe_get0();
+      auto cursor = INTR(tree->begin, *ref_t).unsafe_get0();
       validate_cursor_from_item(smallest_key, smallest_value, cursor);
     }
     {
-      auto cursor = INTR(tree.last, t).unsafe_get0();
+      auto cursor = INTR(tree->last, *ref_t).unsafe_get0();
       validate_cursor_from_item(largest_key, largest_value, cursor);
     }
 
@@ -409,30 +410,30 @@ TEST_F(b_dummy_tree_test_t, 3_random_insert_erase_leaf_node)
       std::sort(kvs.begin(), kvs.end(), [](auto& l, auto& r) {
         return l.first < r.first;
       });
-      auto cursor = INTR(tree.begin, t).unsafe_get0();
+      auto cursor = INTR(tree->begin, *ref_t).unsafe_get0();
       for (auto& [k, v] : kvs) {
         ASSERT_FALSE(cursor.is_end());
         validate_cursor_from_item(k, v, cursor);
-        cursor = INTR(cursor.get_next, t).unsafe_get0();
+        cursor = INTR(cursor.get_next, *ref_t).unsafe_get0();
       }
       ASSERT_TRUE(cursor.is_end());
     }
 
     std::ostringstream oss;
-    tree.dump(t, oss);
+    tree->dump(*ref_t, oss);
     logger().info("\n{}\n", oss.str());
 
     // randomized erase until empty
-    std::random_shuffle(kvs.begin(), kvs.end());
+    std::shuffle(kvs.begin(), kvs.end(), std::default_random_engine{});
     for (auto& [k, v] : kvs) {
-      auto e_size = with_trans_intr(t, [this, &k=k](auto& tr) {
-        return tree.erase(tr, k);
+      auto e_size = with_trans_intr(*ref_t, [this, &k=k](auto& tr) {
+        return tree->erase(tr, k);
       }).unsafe_get0();
       ASSERT_EQ(e_size, 1);
     }
-    auto cursor = INTR(tree.begin, t).unsafe_get0();
+    auto cursor = INTR(tree->begin, *ref_t).unsafe_get0();
     ASSERT_TRUE(cursor.is_end());
-    ASSERT_EQ(INTR(tree.height, t).unsafe_get0(), 1);
+    ASSERT_EQ(INTR(tree->height, *ref_t).unsafe_get0(), 1);
   });
 }
 
@@ -908,7 +909,7 @@ class DummyChildPool {
       ceph_abort("impossible path"); }
     search_position_t merge(NodeExtentMutable&, NodeImpl&, match_stage_t, extent_len_t) override {
       ceph_abort("impossible path"); }
-    eagain_ifuture<NodeExtentMutable> rebuild_extent(context_t, laddr_t) override {
+    eagain_ifuture<NodeExtentMutable> rebuild_extent(context_t) override {
       ceph_abort("impossible path"); }
     node_stats_t get_stats() const override {
       ceph_abort("impossible path"); }
@@ -1190,9 +1191,9 @@ class DummyChildPool {
       EXPECT_EQ(pool_clone.p_dummy->size(), 3);
 
       // erase and merge
-      auto pivot_key = node_to_split->get_pivot_key();
+      [[maybe_unused]] auto pivot_key = node_to_split->get_pivot_key();
       logger().info("\n\nERASE-MERGE {}:", node_to_split->get_name());
-      assert(pivot_key.compare_to(key_hobj_t(key)) == MatchKindCMP::EQ);
+      assert(pivot_key == key_hobj_t(key));
       with_trans_intr(pool_clone.get_context().t, [&] (auto &t) {
         return node_to_split->merge(
           pool_clone.get_context(), std::move(node_to_split));
@@ -1590,7 +1591,6 @@ TEST_F(d_seastore_tm_test_t, 6_random_tree_insert_erase)
       auto t = create_mutate_transaction();
       INTR(tree->bootstrap, *t).unsafe_get();
       submit_transaction(std::move(t));
-      segment_cleaner->run_until_halt().get0();
     }
 
     // test insert
@@ -1598,17 +1598,14 @@ TEST_F(d_seastore_tm_test_t, 6_random_tree_insert_erase)
       auto t = create_mutate_transaction();
       INTR(tree->insert, *t).unsafe_get();
       submit_transaction(std::move(t));
-      segment_cleaner->run_until_halt().get0();
     }
     {
       auto t = create_read_transaction();
       INTR(tree->get_stats, *t).unsafe_get();
     }
     if constexpr (TEST_SEASTORE) {
-      logger().info("seastore replay insert begin");
       restart();
       tree->reload(NodeExtentManager::create_seastore(*tm));
-      logger().info("seastore replay insert end");
     }
     {
       // Note: create_weak_transaction() can also work, but too slow.
@@ -1622,17 +1619,14 @@ TEST_F(d_seastore_tm_test_t, 6_random_tree_insert_erase)
       auto size = kvs.size() / 4 * 3;
       INTR_R(tree->erase, *t, size).unsafe_get();
       submit_transaction(std::move(t));
-      segment_cleaner->run_until_halt().get0();
     }
     {
       auto t = create_read_transaction();
       INTR(tree->get_stats, *t).unsafe_get();
     }
     if constexpr (TEST_SEASTORE) {
-      logger().info("seastore replay erase-1 begin");
       restart();
       tree->reload(NodeExtentManager::create_seastore(*tm));
-      logger().info("seastore replay erase-1 end");
     }
     {
       auto t = create_read_transaction();
@@ -1645,17 +1639,14 @@ TEST_F(d_seastore_tm_test_t, 6_random_tree_insert_erase)
       auto size = kvs.size();
       INTR_R(tree->erase, *t, size).unsafe_get();
       submit_transaction(std::move(t));
-      segment_cleaner->run_until_halt().get0();
     }
     {
       auto t = create_read_transaction();
       INTR(tree->get_stats, *t).unsafe_get();
     }
     if constexpr (TEST_SEASTORE) {
-      logger().info("seastore replay erase-2 begin");
       restart();
       tree->reload(NodeExtentManager::create_seastore(*tm));
-      logger().info("seastore replay erase-2 end");
     }
     {
       auto t = create_read_transaction();
@@ -1702,7 +1693,7 @@ TEST_F(d_seastore_tm_test_t, 7_tree_insert_erase_eagain)
 	  });
 	});
     }).unsafe_get0();
-    segment_cleaner->run_until_halt().get0();
+    epm->run_background_work_until_halt().get0();
 
     // insert
     logger().warn("start inserting {} kvs ...", kvs.size());
@@ -1722,7 +1713,7 @@ TEST_F(d_seastore_tm_test_t, 7_tree_insert_erase_eagain)
 	      });
 	    });
         }).unsafe_get0();
-        segment_cleaner->run_until_halt().get0();
+        epm->run_background_work_until_halt().get0();
         ++iter;
       }
     }
@@ -1768,7 +1759,7 @@ TEST_F(d_seastore_tm_test_t, 7_tree_insert_erase_eagain)
 	      });
 	    });
         }).unsafe_get0();
-        segment_cleaner->run_until_halt().get0();
+        epm->run_background_work_until_halt().get0();
         ++iter;
       }
       kvs.erase_from_random(kvs.random_begin(), kvs.random_end());

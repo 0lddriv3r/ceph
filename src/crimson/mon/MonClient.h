@@ -32,6 +32,8 @@ namespace crimson::net {
   class Messenger;
 }
 
+class LogClient;
+
 struct AuthAuthorizeHandler;
 class MAuthReply;
 struct MMonMap;
@@ -41,6 +43,8 @@ struct MMonCommand;
 struct MMonCommandAck;
 struct MLogAck;
 struct MConfig;
+
+enum class log_flushing_t;
 
 namespace crimson::mon {
 
@@ -62,6 +66,13 @@ class Client : public crimson::net::Dispatcher,
 
   crimson::net::Messenger& msgr;
 
+  LogClient *log_client;
+  bool more_log_pending = false;
+  utime_t last_send_log;
+
+  seastar::future<> send_log(log_flushing_t flush_flag);
+  seastar::future<> wait_for_send_log();
+
   // commands
   using get_version_t = seastar::future<std::tuple<version_t, version_t>>;
 
@@ -72,9 +83,9 @@ class Client : public crimson::net::Dispatcher,
   using command_result_t =
     seastar::future<std::tuple<std::int32_t, std::string, ceph::bufferlist>>;
   struct mon_command_t {
-    ceph::ref_t<MMonCommand> req;
+    MURef<MMonCommand> req;
     typename command_result_t::promise_type result;
-    mon_command_t(ceph::ref_t<MMonCommand> req);
+    mon_command_t(MURef<MMonCommand> req);
   };
   std::vector<mon_command_t> mon_commands;
 
@@ -86,6 +97,10 @@ public:
   ~Client();
   seastar::future<> start();
   seastar::future<> stop();
+
+  void set_log_client(LogClient *clog) {
+    log_client = clog;
+  }
 
   const uuid_d& get_fsid() const {
     return monmap.fsid;

@@ -29,7 +29,7 @@
 using namespace std;
 
 namespace {
-  librgw_t rgw = nullptr;
+  librgw_t h_rgw = nullptr;
   string uid("testuser");
   string access_key("");
   string secret_key("");
@@ -49,13 +49,13 @@ namespace {
 }
 
 TEST(LibRGW, INIT) {
-  int ret = librgw_create(&rgw, saved_args.argc, saved_args.argv);
+  int ret = librgw_create(&h_rgw, saved_args.argc, saved_args.argv);
   ASSERT_EQ(ret, 0);
-  ASSERT_NE(rgw, nullptr);
+  ASSERT_NE(h_rgw, nullptr);
 }
 
 TEST(LibRGW, MOUNT) {
-  int ret = rgw_mount2(rgw, uid.c_str(), access_key.c_str(), secret_key.c_str(),
+  int ret = rgw_mount2(h_rgw, uid.c_str(), access_key.c_str(), secret_key.c_str(),
                        "/", &fs, RGW_MOUNT_FLAG_NONE);
   ASSERT_EQ(ret, 0);
   ASSERT_NE(fs, nullptr);
@@ -173,7 +173,9 @@ TEST(LibRGW, LIST_OBJECTS) {
   }
 }
 
-extern bool global_stop;
+namespace rgw {
+  extern bool global_stop;
+}
 
 TEST(LibRGW, GETATTR_OBJECTS) {
   if (do_getattr) {
@@ -181,7 +183,7 @@ TEST(LibRGW, GETATTR_OBJECTS) {
     struct stat st;
     int ret;
 
-    global_stop = true;
+    rgw::global_stop = true;
 
     for (auto& fid_row : bucket_matrix) {
       auto& fid = get<0>(fid_row); // bucket
@@ -237,19 +239,15 @@ TEST(LibRGW, UMOUNT) {
 }
 
 TEST(LibRGW, SHUTDOWN) {
-  librgw_shutdown(rgw);
+  librgw_shutdown(h_rgw);
 }
 
 int main(int argc, char *argv[])
 {
-  char *v{nullptr};
-  string val;
-  vector<const char*> args;
-
-  argv_to_vec(argc, const_cast<const char**>(argv), args);
+  auto args = argv_to_vec(argc, argv);
   env_to_vec(args);
 
-  v = getenv("AWS_ACCESS_KEY_ID");
+  char* v = getenv("AWS_ACCESS_KEY_ID");
   if (v) {
     access_key = v;
   }
@@ -259,6 +257,7 @@ int main(int argc, char *argv[])
     secret_key = v;
   }
 
+  string val;
   for (auto arg_iter = args.begin(); arg_iter != args.end();) {
     if (ceph_argparse_witharg(args, arg_iter, &val, "--access",
 			      (char*) nullptr)) {

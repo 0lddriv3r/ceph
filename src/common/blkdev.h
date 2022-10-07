@@ -36,12 +36,6 @@ extern int block_device_get_metrics(const std::string& devname, int timeout,
 extern void get_raw_devices(const std::string& in,
 			    std::set<std::string> *ls);
 
-// for VDO
-/// return an op fd for the sysfs stats dir, if this is a VDO device
-extern int get_vdo_stats_handle(const char *devname, std::string *vdo_name);
-extern int64_t get_vdo_stat(int fd, const char *property);
-extern bool get_vdo_utilization(int fd, uint64_t *total, uint64_t *avail);
-
 class BlkDev {
 public:
   BlkDev(int fd);
@@ -56,6 +50,7 @@ public:
   int partition(char* partition, size_t max) const;
   // from a device (e.g., "sdb")
   bool support_discard() const;
+  int get_optimal_io_size() const;
   bool is_rotational() const;
   int get_numa_node(int *node) const;
   int dev(char *dev, size_t max) const;

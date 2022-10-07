@@ -97,7 +97,6 @@ public:
 
 private:
   std::vector<Incremental> pending_auth;
-  version_t last_rotating_ver;
   uint64_t max_global_id;
   uint64_t last_allocated_id;
 
@@ -152,6 +151,8 @@ public:
   void _set_mon_num_rank(int num, int rank); ///< called under mon->auth_lock
 
 private:
+  bool prepare_used_pending_keys(MonOpRequestRef op);
+
   // propose pending update to peers
   void encode_pending(MonitorDBStore::TransactionRef t) override;
   void encode_full(MonitorDBStore::TransactionRef t) override;
@@ -166,6 +167,7 @@ private:
   bool prepare_command(MonOpRequestRef op);
 
   bool check_rotate();
+  void process_used_pending_keys(const std::map<EntityName,CryptoKey>& keys);
 
   bool entity_is_pending(EntityName& entity);
   int exists_and_matches_entity(
@@ -186,7 +188,6 @@ private:
  public:
   AuthMonitor(Monitor &mn, Paxos &p, const std::string& service_name)
     : PaxosService(mn, p, service_name),
-      last_rotating_ver(0),
       max_global_id(0),
       last_allocated_id(0)
   {}

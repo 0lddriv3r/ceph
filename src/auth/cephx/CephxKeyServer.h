@@ -193,10 +193,10 @@ WRITE_CLASS_ENCODER(KeyServerData::Incremental)
 class KeyServer : public KeyStore {
   CephContext *cct;
   KeyServerData data;
+  std::map<EntityName, CryptoKey> used_pending_keys;
   mutable ceph::mutex lock;
 
-  int _rotate_secret(uint32_t service_id);
-  bool _check_rotating_secrets();
+  int _rotate_secret(uint32_t service_id, KeyServerData &pending_data);
   void _dump_rotating_secrets();
   int _build_session_auth_info(uint32_t service_id, 
 			       const AuthTicket& parent_ticket,
@@ -212,9 +212,16 @@ public:
   bool get_auth(const EntityName& name, EntityAuth& auth) const;
   bool get_caps(const EntityName& name, const std::string& type, AuthCapsInfo& caps) const;
   bool get_active_rotating_secret(const EntityName& name, CryptoKey& secret) const;
+
+  void note_used_pending_key(const EntityName& name, const CryptoKey& key);
+  void clear_used_pending_keys();
+  std::map<EntityName,CryptoKey> get_used_pending_keys();
+
   int start_server();
   void rotate_timeout(double timeout);
 
+  void dump();
+  
   int build_session_auth_info(uint32_t service_id,
 			      const AuthTicket& parent_ticket,
 			      CephXSessionAuthInfo& info);
@@ -297,7 +304,7 @@ public:
     }
   }
 
-  bool updated_rotating(ceph::buffer::list& rotating_bl, version_t& rotating_ver);
+  bool prepare_rotating_update(ceph::buffer::list& rotating_bl);
 
   bool get_rotating_encrypted(const EntityName& name, ceph::buffer::list& enc_bl) const;
 

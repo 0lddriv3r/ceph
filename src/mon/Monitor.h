@@ -216,6 +216,19 @@ public:
 
   std::vector<DaemonHealthMetric> get_health_metrics();
 
+  int quorum_age() const {
+    auto age = std::chrono::duration_cast<std::chrono::seconds>(
+      ceph::mono_clock::now() - quorum_since);
+    return age.count();
+  }
+
+  bool is_mon_down() const {
+    int max = monmap->size();
+    int actual = get_quorum().size();
+    auto now = ceph::real_clock::now();
+    return actual < max && now > monmap->created.to_real_time();
+  }
+
   // -- elector --
 private:
   std::unique_ptr<Paxos> paxos;
@@ -783,6 +796,8 @@ public:
     const health_check_map_t& previous,
     MonitorDBStore::TransactionRef t);
 
+  void update_pending_metadata();
+
 protected:
 
   class HealthCheckLogStatus {
@@ -1100,6 +1115,7 @@ public:
 #define CEPH_MON_FEATURE_INCOMPAT_OCTOPUS CompatSet::Feature(12, "octopus ondisk layout")
 #define CEPH_MON_FEATURE_INCOMPAT_PACIFIC CompatSet::Feature(13, "pacific ondisk layout")
 #define CEPH_MON_FEATURE_INCOMPAT_QUINCY CompatSet::Feature(14, "quincy ondisk layout")
+#define CEPH_MON_FEATURE_INCOMPAT_REEF CompatSet::Feature(15, "reef ondisk layout")
 // make sure you add your feature to Monitor::get_supported_features
 
 

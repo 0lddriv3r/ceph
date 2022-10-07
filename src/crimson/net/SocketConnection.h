@@ -29,6 +29,7 @@ class SocketConnection;
 using SocketConnectionRef = seastar::shared_ptr<SocketConnection>;
 
 class SocketConnection : public Connection {
+  const seastar::shard_id core;
   SocketMessenger& messenger;
   std::unique_ptr<Protocol> protocol;
 
@@ -95,6 +96,8 @@ class SocketConnection : public Connection {
   bool is_lossy() const {
     return policy.lossy;
   }
+
+  seastar::socket_address get_local_address() const;
 
   friend class Protocol;
   friend class ProtocolV1;

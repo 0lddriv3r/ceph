@@ -3,7 +3,10 @@
 
 #pragma once
 
+#include <algorithm>
 #include <iostream>
+
+#include <boost/iterator/counting_iterator.hpp>
 
 #include "include/byteorder.h"
 
@@ -59,21 +62,21 @@ public:
     using parent_t = typename maybe_const_t<FixedKVNodeLayout, is_const>::type;
 
     parent_t node;
-    uint16_t offset;
+    uint16_t offset = 0;
 
+    iter_t() = default;
     iter_t(
       parent_t parent,
       uint16_t offset) : node(parent), offset(offset) {}
 
-    iter_t(const iter_t &) = default;
-    iter_t(iter_t &&) = default;
+    iter_t(const iter_t &) noexcept = default;
+    iter_t(iter_t &&) noexcept = default;
+    template<bool is_const_ = is_const>
+    iter_t(const iter_t<false>& it, std::enable_if_t<is_const_, int> = 0)
+      : iter_t{it.node, it.offset}
+    {}
     iter_t &operator=(const iter_t &) = default;
     iter_t &operator=(iter_t &&) = default;
-
-    operator iter_t<!is_const>() const {
-      static_assert(!is_const);
-      return iter_t<!is_const>(node, offset);
-    }
 
     // Work nicely with for loops without requiring a nested type.
     using reference = iter_t&;
@@ -88,6 +91,19 @@ public:
 
     iter_t &operator++() {
       ++offset;
+      return *this;
+    }
+
+    iter_t operator--(int) {
+      assert(offset > 0);
+      auto ret = *this;
+      --offset;
+      return ret;
+    }
+
+    iter_t &operator--() {
+      assert(offset > 0);
+      --offset;
       return *this;
     }
 
@@ -107,15 +123,22 @@ public:
 	offset - off);
     }
 
-    bool operator==(const iter_t &rhs) const {
-      assert(node == rhs.node);
-      return rhs.offset == offset;
+    friend bool operator==(const iter_t &lhs, const iter_t &rhs) {
+      assert(lhs.node == rhs.node);
+      return lhs.offset == rhs.offset;
     }
 
-    bool operator!=(const iter_t &rhs) const {
-      return !(*this == rhs);
+    friend bool operator!=(const iter_t &lhs, const iter_t &rhs) {
+      return !(lhs == rhs);
     }
 
+    friend bool operator==(const iter_t<is_const> &lhs, const iter_t<!is_const> &rhs) {
+      assert(lhs.node == rhs.node);
+      return lhs.offset == rhs.offset;
+    }
+    friend bool operator!=(const iter_t<is_const> &lhs, const iter_t<!is_const> &rhs) {
+      return !(lhs == rhs);
+    }
     K get_key() const {
       return K(node->get_key_ptr()[offset]);
     }
@@ -372,26 +395,32 @@ public:
   }
 
   const_iterator lower_bound(K l) const {
-    auto ret = begin();
-    for (; ret != end(); ++ret) {
-      if (ret->get_key() >= l)
-	break;
-    }
-    return ret;
+    auto it = std::lower_bound(boost::make_counting_iterator<uint16_t>(0),
+	                       boost::make_counting_iterator<uint16_t>(get_size()),
+		               l,
+		               [this](uint16_t i, K key) {
+			         const_iterator iter(this, i);
+			         return iter->get_key() < key;
+			       });
+    return const_iterator(this, *it);
   }
+
   iterator lower_bound(K l) {
     const auto &tref = *this;
     return iterator(this, tref.lower_bound(l).offset);
   }
 
   const_iterator upper_bound(K l) const {
-    auto ret = begin();
-    for (; ret != end(); ++ret) {
-      if (ret->get_key() > l)
-	break;
-    }
-    return ret;
+    auto it = std::upper_bound(boost::make_counting_iterator<uint16_t>(0),
+	                       boost::make_counting_iterator<uint16_t>(get_size()),
+		               l,
+		               [this](K key, uint16_t i) {
+			         const_iterator iter(this, i);
+			         return key < iter->get_key();
+			       });
+    return const_iterator(this, *it);
   }
+
   iterator upper_bound(K l) {
     const auto &tref = *this;
     return iterator(this, tref.upper_bound(l).offset);
