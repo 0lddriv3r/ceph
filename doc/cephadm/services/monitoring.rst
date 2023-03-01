@@ -110,7 +110,8 @@ These two services are not deployed by default in a Ceph cluster. To enable the 
 Networks and Ports
 ~~~~~~~~~~~~~~~~~~
 
-All monitoring services can have the network and port they bind to configured with a yaml service specification
+All monitoring services can have the network and port they bind to configured with a yaml service specification. By default
+cephadm will use ``https`` protocol when configuring Grafana daemons unless the user explicitly sets the protocol to ``http``.
 
 example spec file:
 
@@ -124,6 +125,9 @@ example spec file:
     - 192.169.142.0/24
     spec:
       port: 4200
+      protocol: http
+
+.. _cephadm_monitoring-images:
 
 Using custom images
 ~~~~~~~~~~~~~~~~~~~
@@ -182,6 +186,8 @@ For example, if you had changed the prometheus image
      .. code-block:: bash
 
           ceph config rm mgr mgr/cephadm/container_image_prometheus
+
+See also :ref:`cephadm-airgap`.
 
 .. _cephadm-overwrite-jinja2-templates:
 
@@ -408,14 +414,17 @@ Configuring SSL/TLS for Grafana
 
 ``cephadm`` deploys Grafana using the certificate defined in the ceph
 key/value store. If no certificate is specified, ``cephadm`` generates a
-self-signed certificate during the deployment of the Grafana service.
+self-signed certificate during the deployment of the Grafana service. Each
+certificate is specific for the host it was generated on.
 
 A custom certificate can be configured using the following commands:
 
 .. prompt:: bash #
 
-  ceph config-key set mgr/cephadm/grafana_key -i $PWD/key.pem
-  ceph config-key set mgr/cephadm/grafana_crt -i $PWD/certificate.pem
+  ceph config-key set mgr/cephadm/{hostname}/grafana_key -i $PWD/key.pem
+  ceph config-key set mgr/cephadm/{hostname}/grafana_crt -i $PWD/certificate.pem
+
+Where `hostname` is the hostname for the host where grafana service is deployed.
 
 If you have already deployed Grafana, run ``reconfig`` on the service to
 update its configuration:

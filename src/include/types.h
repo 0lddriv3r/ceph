@@ -320,7 +320,6 @@ WRITE_RAW_ENCODER(ceph_file_layout)
 WRITE_RAW_ENCODER(ceph_dir_layout)
 WRITE_RAW_ENCODER(ceph_mds_session_head)
 WRITE_RAW_ENCODER(ceph_mds_request_head_legacy)
-WRITE_RAW_ENCODER(ceph_mds_request_head)
 WRITE_RAW_ENCODER(ceph_mds_request_release)
 WRITE_RAW_ENCODER(ceph_filelock)
 WRITE_RAW_ENCODER(ceph_mds_caps_head)
@@ -610,6 +609,10 @@ inline std::ostream &operator<<(std::ostream &out, const sha_digest_t<S> &b) {
   std::string str = b.to_str();
   return out << str;
 }
+
+#if FMT_VERSION >= 90000
+template <uint8_t S> struct fmt::formatter<sha_digest_t<S>> : fmt::ostream_formatter {};
+#endif
 
 using sha1_digest_t = sha_digest_t<20>;
 WRITE_CLASS_ENCODER(sha1_digest_t)

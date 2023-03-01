@@ -7,6 +7,7 @@
 #include "crimson/osd/recovery_backend.h"
 #include "crimson/osd/pg.h"
 #include "crimson/osd/pg_backend.h"
+#include "crimson/osd/osd_operations/background_recovery.h"
 
 #include "messages/MOSDFastDispatchOp.h"
 #include "osd/osd_types.h"
@@ -41,8 +42,9 @@ void RecoveryBackend::clean_up(ceph::os::Transaction& t,
   temp_contents.clear();
 
   for (auto& [soid, recovery_waiter] : recovering) {
-    if ((recovery_waiter->pi && recovery_waiter->pi->is_complete())
-	|| (!recovery_waiter->pi
+    if ((recovery_waiter->pull_info
+         && recovery_waiter->pull_info->is_complete())
+	|| (!recovery_waiter->pull_info
 	  && recovery_waiter->obc && recovery_waiter->obc->obs.exists)) {
       recovery_waiter->obc->interrupt(
 	  ::crimson::common::actingset_changed(
@@ -182,7 +184,7 @@ RecoveryBackend::scan_for_backfill(
 	-> interruptible_future<> {
 	crimson::osd::ObjectContextRef obc;
 	if (pg.is_primary()) {
-	  obc = shard_services.maybe_get_cached_obc(object);
+	  obc = pg.obc_registry.maybe_get_cached_obc(object);
 	}
 	if (obc) {
 	  if (obc->obs.exists) {

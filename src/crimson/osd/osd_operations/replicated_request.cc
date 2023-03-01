@@ -49,9 +49,9 @@ ConnectionPipeline &RepRequest::get_connection_pipeline()
   return get_osd_priv(conn.get()).replicated_request_conn_pipeline;
 }
 
-RepRequest::PGPipeline &RepRequest::pp(PG &pg)
+ClientRequest::PGPipeline &RepRequest::pp(PG &pg)
 {
-  return pg.replicated_request_pg_pipeline;
+  return pg.request_pg_pipeline;
 }
 
 seastar::future<> RepRequest::with_pg(
@@ -61,7 +61,7 @@ seastar::future<> RepRequest::with_pg(
 
   IRef ref = this;
   return interruptor::with_interruption([this, pg] {
-    return pg->handle_rep_op(std::move(req));
+    return pg->handle_rep_op(req);
   }, [ref](std::exception_ptr) { return seastar::now(); }, pg);
 }
 

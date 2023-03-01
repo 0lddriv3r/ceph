@@ -18,6 +18,7 @@
 #include "rocksdb/cache.h"
 #include "rocksdb/filter_policy.h"
 #include "rocksdb/utilities/convenience.h"
+#include "rocksdb/utilities/table_properties_collectors.h"
 #include "rocksdb/merge_operator.h"
 
 #include "common/perf_counters.h"
@@ -934,6 +935,14 @@ int RocksDBStore::update_column_family_options(const std::string& base_name,
       return r;
     }
   }
+
+  // Set Compact on Deletion Factory
+  if (cct->_conf->rocksdb_cf_compact_on_deletion) {
+    size_t sliding_window = cct->_conf->rocksdb_cf_compact_on_deletion_sliding_window;
+    size_t trigger = cct->_conf->rocksdb_cf_compact_on_deletion_trigger;
+    cf_opt->table_properties_collector_factories.emplace_back(
+        rocksdb::NewCompactOnDeletionCollectorFactory(sliding_window, trigger));
+  }
   return 0;
 }
 
@@ -1439,7 +1448,7 @@ void RocksDBStore::get_statistics(Formatter *f)
       f->close_section();
     }
     f->open_object_section("rocksdbstore_perf_counters");
-    logger->dump_formatted(f,0);
+    logger->dump_formatted(f, false, false);
     f->close_section();
   }
   if (cct->_conf->rocksdb_collect_memory_stats) {

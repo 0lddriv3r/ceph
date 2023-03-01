@@ -3,6 +3,7 @@ import os
 if 'UNITTEST' in os.environ:
     import tests
 
+import bcrypt
 import cephfs
 import contextlib
 import datetime
@@ -12,7 +13,7 @@ import time
 import logging
 import sys
 from threading import Lock, Condition, Event
-from typing import no_type_check
+from typing import no_type_check, NewType
 import urllib
 from functools import wraps
 if sys.version_info >= (3, 3):
@@ -28,6 +29,8 @@ T = TypeVar('T')
 
 if TYPE_CHECKING:
     from mgr_module import MgrModule
+
+ConfEntity = NewType('ConfEntity', str)
 
 Module_T = TypeVar('Module_T', bound="MgrModule")
 
@@ -573,10 +576,14 @@ def verify_cacrt_content(crt):
     # type: (str) -> None
     from OpenSSL import crypto
     try:
-        x509 = crypto.load_certificate(crypto.FILETYPE_PEM, crt)
+        crt_buffer = crt.encode("ascii") if isinstance(crt, str) else crt
+        x509 = crypto.load_certificate(crypto.FILETYPE_PEM, crt_buffer)
         if x509.has_expired():
             org, cn = get_cert_issuer_info(crt)
-            end_date = datetime.datetime.strptime(x509.get_notAfter().decode('ascii'), '%Y%m%d%H%M%SZ')
+            no_after = x509.get_notAfter()
+            end_date = None
+            if no_after is not None:
+                end_date = datetime.datetime.strptime(no_after.decode('ascii'), '%Y%m%d%H%M%SZ')
             msg = f'Certificate issued by "{org}/{cn}" expired on {end_date}'
             logger.warning(msg)
             raise ServerConfigException(msg)
@@ -605,8 +612,9 @@ def get_cert_issuer_info(crt: str) -> Tuple[Optional[str],Optional[str]]:
 
     from OpenSSL import crypto, SSL
     try:
+        crt_buffer = crt.encode("ascii") if isinstance(crt, str) else crt
         (org_name, cn) = (None, None)
-        cert = crypto.load_certificate(crypto.FILETYPE_PEM, crt)
+        cert = crypto.load_certificate(crypto.FILETYPE_PEM, crt_buffer)
         components = cert.get_issuer().get_components()
         for c in components:
             if c[0].decode() == 'O':  # org comp
@@ -629,7 +637,8 @@ def verify_tls(crt, key):
         raise ServerConfigException(
             'Invalid private key: {}'.format(str(e)))
     try:
-        _crt = crypto.load_certificate(crypto.FILETYPE_PEM, crt)
+        crt_buffer = crt.encode("ascii") if isinstance(crt, str) else crt
+        _crt = crypto.load_certificate(crypto.FILETYPE_PEM, crt_buffer)
     except ValueError as e:
         raise ServerConfigException(
             'Invalid certificate key: {}'.format(str(e))
@@ -742,6 +751,18 @@ def get_time_series_rates(data: List[Tuple[float, float]]) -> List[Tuple[float, 
     return [(data2[0], _derivative(data1, data2) if data1 is not None else 0.0) for data1, data2 in
             _pairwise(data)]
 
+def name_to_config_section(name: str) -> ConfEntity:
+    """
+    Map from daemon names to ceph entity names (as seen in config)
+    """
+    daemon_type = name.split('.', 1)[0]
+    if daemon_type in ['rgw', 'rbd-mirror', 'nfs', 'crash', 'iscsi']:
+        return ConfEntity('client.' + name)
+    elif daemon_type in ['mon', 'osd', 'mds', 'mgr', 'client']:
+        return ConfEntity(name)
+    else:
+        return ConfEntity('mon')
+
 
 def _filter_time_series(data: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
     """ Filters time series data
@@ -853,3 +874,13 @@ def profile_method(skip_attribute: bool = False) -> Callable[[Callable[..., T]],
             return result
         return wrapper
     return outer
+
+
+def password_hash(password: Optional[str], salt_password: Optional[str] = None) -> Optional[str]:
+    if not password:
+        return None
+    if not salt_password:
+        salt = bcrypt.gensalt()
+    else:
+        salt = salt_password.encode('utf8')
+    return bcrypt.hashpw(password.encode('utf8'), salt).decode('utf8')

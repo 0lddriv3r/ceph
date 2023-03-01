@@ -315,7 +315,7 @@ public:
       c.trans,
       node_size,
       placement_hint_t::HOT,
-      0);
+      INIT_GENERATION);
     root_leaf->set_size(0);
     fixed_kv_node_meta_t<node_key_t> meta{min_max_t<node_key_t>::min, min_max_t<node_key_t>::max, 1};
     root_leaf->set_meta(meta);
@@ -722,7 +722,7 @@ public:
     op_context_t<node_key_t> c,
     paddr_t addr,
     node_key_t laddr,
-    seastore_off_t len)
+    extent_len_t len)
   {
     LOG_PREFIX(FixedKVBtree::get_leaf_if_live);
     return lower_bound(
@@ -760,7 +760,7 @@ public:
     op_context_t<node_key_t> c,
     paddr_t addr,
     node_key_t laddr,
-    seastore_off_t len)
+    extent_len_t len)
   {
     LOG_PREFIX(FixedKVBtree::get_internal_if_live);
     return lower_bound(
@@ -806,10 +806,7 @@ public:
     op_context_t<node_key_t> c,
     CachedExtentRef e) {
     LOG_PREFIX(FixedKVBtree::rewrite_extent);
-    assert(e->get_type() == extent_types_t::LADDR_INTERNAL ||
-           e->get_type() == extent_types_t::LADDR_LEAF ||
-           e->get_type() == extent_types_t::BACKREF_INTERNAL ||
-           e->get_type() == extent_types_t::BACKREF_LEAF);
+    assert(is_lba_backref_node(e->get_type()));
     
     auto do_rewrite = [&](auto &fixed_kv_extent) {
       auto n_fixed_kv_extent = c.cache.template alloc_new_extent<
@@ -818,7 +815,8 @@ public:
         c.trans,
         fixed_kv_extent.get_length(),
         fixed_kv_extent.get_user_hint(),
-        fixed_kv_extent.get_reclaim_generation());
+        // get target rewrite generation
+        fixed_kv_extent.get_rewrite_generation());
       fixed_kv_extent.get_bptr().copy_out(
         0,
         fixed_kv_extent.get_length(),
@@ -835,9 +833,13 @@ public:
        * Upon commit, these now block relative addresses will be interpretted
        * against the real final address.
        */
-      n_fixed_kv_extent->resolve_relative_addrs(
-        make_record_relative_paddr(0).block_relative_to(
-          n_fixed_kv_extent->get_paddr()));
+      if (!n_fixed_kv_extent->get_paddr().is_absolute()) {
+	// backend_type_t::SEGMENTED
+	assert(n_fixed_kv_extent->get_paddr().is_record_relative());
+	n_fixed_kv_extent->resolve_relative_addrs(
+	  make_record_relative_paddr(0).block_relative_to(
+	    n_fixed_kv_extent->get_paddr()));
+      } // else: backend_type_t::RANDOM_BLOCK
       
       SUBTRACET(
         seastore_fixedkv_tree,
@@ -1406,7 +1408,7 @@ private:
 
     if (split_from == iter.get_depth()) {
       auto nroot = c.cache.template alloc_new_extent<internal_node_t>(
-        c.trans, node_size, placement_hint_t::HOT, 0);
+        c.trans, node_size, placement_hint_t::HOT, INIT_GENERATION);
       fixed_kv_node_meta_t<node_key_t> meta{
         min_max_t<node_key_t>::min, min_max_t<node_key_t>::max, iter.get_depth() + 1};
       nroot->set_meta(meta);

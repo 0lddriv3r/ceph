@@ -26,7 +26,7 @@ import errno
 import struct
 import ssl
 from enum import Enum
-from typing import Dict, List, Tuple, Optional, Union, Any, NoReturn, Callable, IO, Sequence, TypeVar, cast, Set, Iterable
+from typing import Dict, List, Tuple, Optional, Union, Any, NoReturn, Callable, IO, Sequence, TypeVar, cast, Set, Iterable, TextIO
 
 import re
 import uuid
@@ -82,6 +82,7 @@ DATA_DIR_MODE = 0o700
 CONTAINER_INIT = True
 MIN_PODMAN_VERSION = (2, 0, 2)
 CGROUPS_SPLIT_PODMAN_VERSION = (2, 1, 0)
+PIDS_LIMIT_UNLIMITED_PODMAN_VERSION = (3, 4, 1)
 CUSTOM_PS1 = r'[ceph: \u@\h \W]\$ '
 DEFAULT_TIMEOUT = None  # in seconds
 DEFAULT_RETRY = 15
@@ -233,9 +234,8 @@ class ContainerEngine:
     def __init__(self) -> None:
         self.path = find_program(self.EXE)
 
-    @classmethod
     @property
-    def EXE(cls) -> str:
+    def EXE(self) -> str:
         raise NotImplementedError()
 
     def __str__(self) -> str:
@@ -375,7 +375,8 @@ class UnauthorizedRegistryError(Error):
 
 class Ceph(object):
     daemons = ('mon', 'mgr', 'osd', 'mds', 'rgw', 'rbd-mirror',
-               'crash', 'cephfs-mirror')
+               'crash', 'cephfs-mirror', 'ceph-exporter')
+    gateways = ('iscsi', 'nfs')
 
 ##################################
 
@@ -590,7 +591,7 @@ class Monitoring(object):
             'cpus': '1',
             'memory': '1GB',
             'args': [
-                '--no-collector.timex',
+                '--no-collector.timex'
             ],
         },
         'grafana': {
@@ -935,6 +936,64 @@ class CephIscsi(object):
         tcmu_container.entrypoint = '/usr/bin/tcmu-runner'
         tcmu_container.cname = self.get_container_name(desc='tcmu')
         return tcmu_container
+
+##################################
+
+
+class CephExporter(object):
+    """Defines a Ceph exporter container"""
+
+    daemon_type = 'ceph-exporter'
+    entrypoint = '/usr/bin/ceph-exporter'
+    DEFAULT_PORT = 9926
+    port_map = {
+        'ceph-exporter': DEFAULT_PORT,
+    }
+
+    def __init__(self,
+                 ctx: CephadmContext,
+                 fsid: str, daemon_id: Union[int, str],
+                 config_json: Dict[str, Any],
+                 image: str = DEFAULT_IMAGE) -> None:
+        self.ctx = ctx
+        self.fsid = fsid
+        self.daemon_id = daemon_id
+        self.image = image
+
+        self.sock_dir = config_json.get('sock-dir', '/var/run/ceph/')
+        self.addrs = config_json.get('addrs', socket.gethostbyname(socket.gethostname()))
+        self.port = config_json.get('port', self.DEFAULT_PORT)
+        self.prio_limit = config_json.get('prio-limit', 5)
+        self.stats_period = config_json.get('stats-period', 5)
+
+        self.validate()
+
+    @classmethod
+    def init(cls, ctx: CephadmContext, fsid: str,
+             daemon_id: Union[int, str]) -> 'CephExporter':
+        return cls(ctx, fsid, daemon_id,
+                   get_parm(ctx.config_json), ctx.image)
+
+    @staticmethod
+    def get_container_mounts() -> Dict[str, str]:
+        mounts = dict()
+        mounts['/var/run/ceph'] = '/var/run/ceph:z'
+        return mounts
+
+    def get_daemon_args(self) -> List[str]:
+        args = [
+            f'--sock-dir={self.sock_dir}',
+            f'--addrs={self.addrs}',
+            f'--port={self.port}',
+            f'--prio-limit={self.prio_limit}',
+            f'--stats-period={self.stats_period}',
+        ]
+        return args
+
+    def validate(self) -> None:
+        if not os.path.isdir(self.sock_dir):
+            raise Error(f'Directory does not exist. Got: {self.sock_dir}')
+
 
 ##################################
 
@@ -1974,9 +2033,23 @@ def get_hostname():
     return socket.gethostname()
 
 
+def get_short_hostname():
+    # type: () -> str
+    return get_hostname().split('.', 1)[0]
+
+
 def get_fqdn():
     # type: () -> str
     return socket.getfqdn() or socket.gethostname()
+
+
+def get_ip_addresses(hostname: str) -> Tuple[List[str], List[str]]:
+    items = socket.getaddrinfo(hostname, None,
+                               flags=socket.AI_CANONNAME,
+                               type=socket.SOCK_STREAM)
+    ipv4_addresses = [i[4][0] for i in items if i[0] == socket.AF_INET]
+    ipv6_addresses = [i[4][0] for i in items if i[0] == socket.AF_INET6]
+    return ipv4_addresses, ipv6_addresses
 
 
 def get_arch():
@@ -1986,8 +2059,8 @@ def get_arch():
 
 def generate_service_id():
     # type: () -> str
-    return get_hostname() + '.' + ''.join(random.choice(string.ascii_lowercase)
-                                          for _ in range(6))
+    return get_short_hostname() + '.' + ''.join(random.choice(string.ascii_lowercase)
+                                                for _ in range(6))
 
 
 def generate_password():
@@ -2403,7 +2476,7 @@ def find_executable(executable: str, path: Optional[str] = None) -> Optional[str
     """
     _, ext = os.path.splitext(executable)
     if (sys.platform == 'win32') and (ext != '.exe'):
-        executable = executable + '.exe'
+        executable = executable + '.exe'  # pragma: no cover
 
     if os.path.isfile(executable):
         return executable
@@ -2598,7 +2671,7 @@ def get_daemon_args(ctx, fsid, daemon_type, daemon_id):
     # type: (CephadmContext, str, str, Union[int, str]) -> List[str]
     r = list()  # type: List[str]
 
-    if daemon_type in Ceph.daemons and daemon_type != 'crash':
+    if daemon_type in Ceph.daemons and daemon_type not in ['crash', 'ceph-exporter']:
         r += [
             '--setuser', 'ceph',
             '--setgroup', 'ceph',
@@ -2648,17 +2721,39 @@ def get_daemon_args(ctx, fsid, daemon_type, daemon_id):
                 r += [f'--storage.tsdb.retention.size={retention_size}']
                 scheme = 'http'
                 host = get_fqdn()
+                # in case host is not an fqdn then we use the IP to
+                # avoid producing a broken web.external-url link
+                if '.' not in host:
+                    ipv4_addrs, ipv6_addrs = get_ip_addresses(get_hostname())
+                    # use the first ipv4 (if any) otherwise use the first ipv6
+                    addr = next(iter(ipv4_addrs or ipv6_addrs), None)
+                    host = wrap_ipv6(addr) if addr else host
                 r += [f'--web.external-url={scheme}://{host}:{port}']
         if daemon_type == 'alertmanager':
             config = get_parm(ctx.config_json)
             peers = config.get('peers', list())  # type: ignore
             for peer in peers:
                 r += ['--cluster.peer={}'.format(peer)]
+            try:
+                r += [f'--web.config.file={config["web_config"]}']
+            except KeyError:
+                pass
             # some alertmanager, by default, look elsewhere for a config
             r += ['--config.file=/etc/alertmanager/alertmanager.yml']
         if daemon_type == 'promtail':
             r += ['--config.expand-env']
+        if daemon_type == 'prometheus':
+            config = get_parm(ctx.config_json)
+            try:
+                r += [f'--web.config.file={config["web_config"]}']
+            except KeyError:
+                pass
         if daemon_type == 'node-exporter':
+            config = get_parm(ctx.config_json)
+            try:
+                r += [f'--web.config={config["web_config"]}']
+            except KeyError:
+                pass
             r += ['--path.procfs=/host/proc',
                   '--path.sysfs=/host/sys',
                   '--path.rootfs=/rootfs']
@@ -2667,6 +2762,9 @@ def get_daemon_args(ctx, fsid, daemon_type, daemon_id):
     elif daemon_type == NFSGanesha.daemon_type:
         nfs_ganesha = NFSGanesha.init(ctx, fsid, daemon_id)
         r += nfs_ganesha.get_daemon_args()
+    elif daemon_type == CephExporter.daemon_type:
+        ceph_exporter = CephExporter.init(ctx, fsid, daemon_id)
+        r.extend(ceph_exporter.get_daemon_args())
     elif daemon_type == HAproxy.daemon_type:
         haproxy = HAproxy.init(ctx, fsid, daemon_id)
         r += haproxy.get_daemon_args()
@@ -2746,6 +2844,12 @@ def create_daemon_dirs(ctx, fsid, daemon_type, daemon_id, uid, gid,
             config_dir = 'etc/loki'
             makedirs(os.path.join(data_dir_root, config_dir), uid, gid, 0o755)
             makedirs(os.path.join(data_dir_root, 'data'), uid, gid, 0o755)
+        elif daemon_type == 'node-exporter':
+            data_dir_root = get_data_dir(fsid, ctx.data_dir,
+                                         daemon_type, daemon_id)
+            config_dir = 'etc/node-exporter'
+            makedirs(os.path.join(data_dir_root, config_dir), uid, gid, 0o755)
+            recursive_chown(os.path.join(data_dir_root, 'etc'), uid, gid)
 
         # populate the config directory for the component from the config-json
         if 'files' in config_json:
@@ -2928,7 +3032,7 @@ def get_container_mounts(ctx, fsid, daemon_type, daemon_id,
             mounts[data_dir] = cdata_dir + ':z'
         if not no_config:
             mounts[data_dir + '/config'] = '/etc/ceph/ceph.conf:z'
-        if daemon_type in ['rbd-mirror', 'cephfs-mirror', 'crash']:
+        if daemon_type in ['rbd-mirror', 'cephfs-mirror', 'crash', 'ceph-exporter']:
             # these do not search for their keyrings in a data directory
             mounts[data_dir + '/keyring'] = '/etc/ceph/ceph.client.%s.%s.keyring' % (daemon_type, daemon_id)
 
@@ -2979,6 +3083,7 @@ def get_container_mounts(ctx, fsid, daemon_type, daemon_id,
             mounts[log_dir] = '/var/log/ceph:z'
             mounts[os.path.join(data_dir, 'data')] = '/promtail:Z'
         elif daemon_type == 'node-exporter':
+            mounts[os.path.join(data_dir, 'etc/node-exporter')] = '/etc/node-exporter:Z'
             mounts['/proc'] = '/host/proc:ro'
             mounts['/sys'] = '/host/sys:ro'
             mounts['/'] = '/rootfs:ro'
@@ -3057,7 +3162,10 @@ def set_pids_limit_unlimited(ctx: CephadmContext, container_args: List[str]) -> 
     # Useful for daemons like iscsi where the default pids-limit limits the number of luns
     # per iscsi target or rgw where increasing the rgw_thread_pool_size to a value near
     # the default pids-limit may cause the container to crash.
-    if isinstance(ctx.container_engine, Podman):
+    if (
+        isinstance(ctx.container_engine, Podman)
+        and ctx.container_engine.version >= PIDS_LIMIT_UNLIMITED_PODMAN_VERSION
+    ):
         container_args.append('--pids-limit=-1')
     else:
         container_args.append('--pids-limit=0')
@@ -3078,13 +3186,14 @@ def get_container(ctx: CephadmContext,
         envs.append('TCMALLOC_MAX_TOTAL_THREAD_CACHE_BYTES=134217728')
     if container_args is None:
         container_args = []
+    if daemon_type in Ceph.daemons or daemon_type in Ceph.gateways:
+        set_pids_limit_unlimited(ctx, container_args)
     if daemon_type in ['mon', 'osd']:
         # mon and osd need privileged in order for libudev to query devices
         privileged = True
     if daemon_type == 'rgw':
         entrypoint = '/usr/bin/radosgw'
         name = 'client.rgw.%s' % daemon_id
-        set_pids_limit_unlimited(ctx, container_args)
     elif daemon_type == 'rbd-mirror':
         entrypoint = '/usr/bin/rbd-mirror'
         name = 'client.rbd-mirror.%s' % daemon_id
@@ -3109,6 +3218,9 @@ def get_container(ctx: CephadmContext,
         entrypoint = NFSGanesha.entrypoint
         name = '%s.%s' % (daemon_type, daemon_id)
         envs.extend(NFSGanesha.get_container_envs())
+    elif daemon_type == CephExporter.daemon_type:
+        entrypoint = CephExporter.entrypoint
+        name = 'client.ceph-exporter.%s' % daemon_id
     elif daemon_type == HAproxy.daemon_type:
         name = '%s.%s' % (daemon_type, daemon_id)
         container_args.extend(['--user=root'])  # haproxy 2.4 defaults to a different user
@@ -3117,14 +3229,11 @@ def get_container(ctx: CephadmContext,
         envs.extend(Keepalived.get_container_envs())
         container_args.extend(['--cap-add=NET_ADMIN', '--cap-add=NET_RAW'])
     elif daemon_type == CephIscsi.daemon_type:
-        # Applies only on rbd-target-api as get_tcmu_runner_container()
-        # removes all tcmu-runner arguments
         entrypoint = CephIscsi.entrypoint
         name = '%s.%s' % (daemon_type, daemon_id)
         # So the container can modprobe iscsi_target_mod and have write perms
         # to configfs we need to make this a privileged container.
         privileged = True
-        set_pids_limit_unlimited(ctx, container_args)
     elif daemon_type == CustomContainer.daemon_type:
         cc = CustomContainer.init(ctx, fsid, daemon_id)
         entrypoint = cc.entrypoint
@@ -3317,7 +3426,7 @@ def deploy_daemon(ctx, fsid, daemon_type, daemon_id, c, uid, gid,
     # Open ports explicitly required for the daemon
     if ports:
         fw = Firewalld(ctx)
-        fw.open_ports(ports)
+        fw.open_ports(ports + fw.external_ports.get(daemon_type, []))
         fw.apply_rules()
 
     if reconfig and daemon_type not in Ceph.daemons:
@@ -3394,6 +3503,15 @@ def deploy_daemon_units(
     ports: Optional[List[int]] = None,
 ) -> None:
     # cmd
+
+    def add_stop_actions(f: TextIO) -> None:
+        # following generated script basically checks if the container exists
+        # before stopping it. Exit code will be success either if it doesn't
+        # exist or if it exists and is stopped successfully.
+        container_exists = f'{ctx.container_engine.path} inspect %s &>/dev/null'
+        f.write(f'! {container_exists % c.old_cname} || {" ".join(c.stop_cmd(old_cname=True))} \n')
+        f.write(f'! {container_exists % c.cname} || {" ".join(c.stop_cmd())} \n')
+
     data_dir = get_data_dir(fsid, ctx.data_dir, daemon_type, daemon_id)
     with open(data_dir + '/unit.run.new', 'w') as f, \
             open(data_dir + '/unit.meta.new', 'w') as metaf:
@@ -3480,6 +3598,9 @@ def deploy_daemon_units(
 
     # post-stop command(s)
     with open(data_dir + '/unit.poststop.new', 'w') as f:
+        # this is a fallback to eventually stop any underlying container that was not stopped properly by unit.stop,
+        # this could happen in very slow setups as described in the issue https://tracker.ceph.com/issues/58242.
+        add_stop_actions(f)
         if daemon_type == 'osd':
             assert osd_fsid
             poststop = get_ceph_volume_container(
@@ -3509,13 +3630,7 @@ def deploy_daemon_units(
 
     # post-stop command(s)
     with open(data_dir + '/unit.stop.new', 'w') as f:
-        # following generated script basically checks if the container exists
-        # before stopping it. Exit code will be success either if it doesn't
-        # exist or if it exists and is stopped successfully.
-        container_exists = f'{ctx.container_engine.path} inspect %s &>/dev/null'
-        f.write(f'! {container_exists % c.old_cname} || {" ".join(c.stop_cmd(old_cname=True))} \n')
-        f.write(f'! {container_exists % c.cname} || {" ".join(c.stop_cmd())} \n')
-
+        add_stop_actions(f)
         os.fchmod(f.fileno(), 0o600)
         os.rename(data_dir + '/unit.stop.new',
                   data_dir + '/unit.stop')
@@ -3553,6 +3668,18 @@ def deploy_daemon_units(
 
 
 class Firewalld(object):
+
+    # for specifying ports we should always open when opening
+    # ports for a daemon of that type. Main use case is for ports
+    # that we should open when deploying the daemon type but that
+    # the daemon itself may not necessarily need to bind to the port.
+    # This needs to be handed differently as we don't want to fail
+    # deployment if the port cannot be bound to but we still want to
+    # open the port in the firewall.
+    external_ports: Dict[str, List[int]] = {
+        'iscsi': [3260]  # 3260 is the well known iSCSI port
+    }
+
     def __init__(self, ctx):
         # type: (CephadmContext) -> None
         self.ctx = ctx
@@ -3812,6 +3939,10 @@ def install_base_units(ctx, fsid):
         call_throws(ctx, ['systemctl', 'enable', 'ceph-%s.target' % fsid])
         call_throws(ctx, ['systemctl', 'start', 'ceph-%s.target' % fsid])
 
+    # don't overwrite file in order to allow users to manipulate it
+    if os.path.exists(ctx.logrotate_dir + f'/ceph-{fsid}'):
+        return
+
     # logrotate for the cluster
     with open(ctx.logrotate_dir + '/ceph-%s' % fsid, 'w') as f:
         """
@@ -3875,7 +4006,7 @@ ExecStopPost=-/bin/bash {data_dir}/{fsid}/%i/unit.poststop
 KillMode=none
 Restart=on-failure
 RestartSec=10s
-TimeoutStartSec=120
+TimeoutStartSec=200
 TimeoutStopSec=120
 StartLimitInterval=30min
 StartLimitBurst=5
@@ -4169,6 +4300,7 @@ class MgrListener(Thread):
                     err_str = f'Failed to extract length of payload from message: {e}'
                     conn.send(err_str.encode())
                     logger.error(err_str)
+                    continue
                 while True:
                     payload = conn.recv(length).decode()
                     if not payload:
@@ -4326,6 +4458,10 @@ WantedBy=ceph-{fsid}.target
         self.stop = True
         if self.mgr_listener.is_alive():
             self.mgr_listener.shutdown()
+        if self.ls_gatherer.is_alive():
+            self.ls_gatherer.shutdown()
+        if self.volume_gatherer.is_alive():
+            self.volume_gatherer.shutdown()
 
     def wakeup(self) -> None:
         self.event.set()
@@ -4393,10 +4529,11 @@ WantedBy=ceph-{fsid}.target
             # part of the networks info is returned as a set which is not JSON
             # serializable. The set must be converted to a list
             networks = list_networks(self.ctx)
-            networks_list = {}
+            networks_list: Dict[str, Dict[str, List[str]]] = {}
             for key in networks.keys():
+                networks_list[key] = {}
                 for k, v in networks[key].items():
-                    networks_list[key] = {k: list(v)}
+                    networks_list[key][k] = list(v)
 
             data = json.dumps({'host': self.host,
                                'ls': (self.ls_gatherer.data if self.ack == self.ls_gatherer.ack
@@ -4536,6 +4673,7 @@ WantedBy=ceph-{fsid}.target
                 # case for a new daemon in ls or an old daemon no longer appearing.
                 # If that happens we need a full ls
                 logger.info('Change detected in state of daemons. Running full daemon ls')
+                self.cached_ls_values = {}
                 ls = list_daemons(self.ctx)
                 for d in ls:
                     self.cached_ls_values[d['name']] = d
@@ -4567,6 +4705,7 @@ WantedBy=ceph-{fsid}.target
             if need_full_ls:
                 logger.info('Change detected in state of daemons. Running full daemon ls')
                 ls = list_daemons(self.ctx)
+                self.cached_ls_values = {}
                 for d in ls:
                     self.cached_ls_values[d['name']] = d
                 return (ls, True)
@@ -5183,8 +5322,11 @@ def create_mgr(
     mgr_c = get_container(ctx, fsid, 'mgr', mgr_id)
     # Note:the default port used by the Prometheus node exporter is opened in fw
     ctx.meta_json = json.dumps({'service_name': 'mgr'})
+    ports = [9283, 8765]
+    if not ctx.skip_monitoring_stack:
+        ports.append(8443)
     deploy_daemon(ctx, fsid, 'mgr', mgr_id, mgr_c, uid, gid,
-                  config=config, keyring=mgr_keyring, ports=[9283, 8765])
+                  config=config, keyring=mgr_keyring, ports=ports)
 
     # wait for the service to become available
     logger.info('Waiting for mgr to start...')
@@ -5263,7 +5405,7 @@ def prepare_ssh(
         cli(['orch', 'apply', 'crash'])
 
     if not ctx.skip_monitoring_stack:
-        for t in ['prometheus', 'grafana', 'node-exporter', 'alertmanager']:
+        for t in ['ceph-exporter', 'prometheus', 'grafana', 'node-exporter', 'alertmanager']:
             logger.info('Deploying %s service with default placement...' % t)
             cli(['orch', 'apply', t])
 
@@ -5455,62 +5597,105 @@ def finish_bootstrap_config(
     pass
 
 
-# funcs to process spec file for apply spec
-def _parse_yaml_docs(f: Iterable[str]) -> List[List[str]]:
-    docs = []
-    current_doc = []  # type: List[str]
+def _extract_host_info_from_applied_spec(f: Iterable[str]) -> List[Dict[str, str]]:
+    # overall goal of this function is to go through an applied spec and find
+    # the hostname (and addr is provided) for each host spec in the applied spec.
+    # Generally, we should be able to just pass the spec to the mgr module where
+    # proper yaml parsing can happen, but for host specs in particular we want to
+    # be able to distribute ssh keys, which requires finding the hostname (and addr
+    # if possible) for each potential host spec in the applied spec.
+
+    specs: List[List[str]] = []
+    current_spec: List[str] = []
     for line in f:
         if re.search(r'^---\s+', line):
-            if current_doc:
-                docs.append(current_doc)
-            current_doc = []
+            if current_spec:
+                specs.append(current_spec)
+            current_spec = []
         else:
-            current_doc.append(line.rstrip())
-    if current_doc:
-        docs.append(current_doc)
-    return docs
+            line = line.strip()
+            if line:
+                current_spec.append(line)
+    if current_spec:
+        specs.append(current_spec)
+
+    host_specs: List[List[str]] = []
+    for spec in specs:
+        for line in spec:
+            if 'service_type' in line:
+                try:
+                    _, type = line.split(':')
+                    type = type.strip()
+                    if type == 'host':
+                        host_specs.append(spec)
+                except ValueError as e:
+                    spec_str = '\n'.join(spec)
+                    logger.error(f'Failed to pull service_type from spec:\n{spec_str}. Got error: {e}')
+                break
+            spec_str = '\n'.join(spec)
+            logger.error(f'Failed to find service_type within spec:\n{spec_str}')
+
+    host_dicts = []
+    for s in host_specs:
+        host_dict = _extract_host_info_from_spec(s)
+        # if host_dict is empty here, we failed to pull the hostname
+        # for the host from the spec. This should have already been logged
+        # so at this point we just don't want to include it in our output
+        if host_dict:
+            host_dicts.append(host_dict)
+
+    return host_dicts
 
 
-def _parse_yaml_obj(doc: List[str]) -> Dict[str, str]:
-    # note: this only parses the first layer of yaml
-    obj = {}  # type: Dict[str, str]
-    current_key = ''
-    for line in doc:
-        if line.startswith(' '):
-            obj[current_key] += line.strip()
-        elif line.endswith(':'):
-            current_key = line.strip(':')
-            obj[current_key] = ''
-        else:
-            current_key, val = line.split(':')
-            obj[current_key] = val.strip()
-    return obj
+def _extract_host_info_from_spec(host_spec: List[str]) -> Dict[str, str]:
+    # note:for our purposes here, we only really want the hostname
+    # and address of the host from each of these specs in order to
+    # be able to distribute ssh keys. We will later apply the spec
+    # through the mgr module where proper yaml parsing can be done
+    # The returned dicts from this function should only contain
+    # one or two entries, one (required) for hostname, one (optional) for addr
+    # {
+    #   hostname: <hostname>
+    #   addr: <ip-addr>
+    # }
+    # if we fail to find the hostname, an empty dict is returned
+
+    host_dict = {}  # type: Dict[str, str]
+    for line in host_spec:
+        for field in ['hostname', 'addr']:
+            if field in line:
+                try:
+                    _, field_value = line.split(':')
+                    field_value = field_value.strip()
+                    host_dict[field] = field_value
+                except ValueError as e:
+                    spec_str = '\n'.join(host_spec)
+                    logger.error(f'Error trying to pull {field} from host spec:\n{spec_str}. Got error: {e}')
+
+    if 'hostname' not in host_dict:
+        spec_str = '\n'.join(host_spec)
+        logger.error(f'Could not find hostname in host spec:\n{spec_str}')
+        return {}
+    return host_dict
 
 
-def parse_yaml_objs(f: Iterable[str]) -> List[Dict[str, str]]:
-    objs = []
-    for d in _parse_yaml_docs(f):
-        objs.append(_parse_yaml_obj(d))
-    return objs
-
-
-def _distribute_ssh_keys(ctx: CephadmContext, host_spec: Dict[str, str], bootstrap_hostname: str) -> int:
+def _distribute_ssh_keys(ctx: CephadmContext, host_info: Dict[str, str], bootstrap_hostname: str) -> int:
     # copy ssh key to hosts in host spec (used for apply spec)
     ssh_key = CEPH_DEFAULT_PUBKEY
     if ctx.ssh_public_key:
         ssh_key = ctx.ssh_public_key.name
 
-    if bootstrap_hostname != host_spec['hostname']:
-        if 'addr' in host_spec:
-            addr = host_spec['addr']
+    if bootstrap_hostname != host_info['hostname']:
+        if 'addr' in host_info:
+            addr = host_info['addr']
         else:
-            addr = host_spec['hostname']
+            addr = host_info['hostname']
         out, err, code = call(ctx, ['sudo', '-u', ctx.ssh_user, 'ssh-copy-id', '-f', '-i', ssh_key, '-o StrictHostKeyChecking=no', '%s@%s' % (ctx.ssh_user, addr)])
         if code:
-            logger.info('\nCopying ssh key to host %s at address %s failed!\n' % (host_spec['hostname'], addr))
+            logger.error('\nCopying ssh key to host %s at address %s failed!\n' % (host_info['hostname'], addr))
             return 1
         else:
-            logger.info('Added ssh key to host %s at address %s\n' % (host_spec['hostname'], addr))
+            logger.info('Added ssh key to host %s at address %s' % (host_info['hostname'], addr))
     return 0
 
 
@@ -5592,7 +5777,7 @@ def command_bootstrap(ctx):
     hostname = get_hostname()
     if '.' in hostname and not ctx.allow_fqdn_hostname:
         raise Error('hostname is a fully qualified domain name (%s); either fix (e.g., "sudo hostname %s" or similar) or pass --allow-fqdn-hostname' % (hostname, hostname.split('.')[0]))
-    mon_id = ctx.mon_id or hostname
+    mon_id = ctx.mon_id or get_short_hostname()
     mgr_id = ctx.mgr_id or generate_service_id()
 
     lock = FileLock(ctx, fsid)
@@ -5744,12 +5929,9 @@ def command_bootstrap(ctx):
         logger.info('Applying %s to cluster' % ctx.apply_spec)
         # copy ssh key to hosts in spec file
         with open(ctx.apply_spec) as f:
-            try:
-                for spec in parse_yaml_objs(f):
-                    if spec.get('service_type') == 'host':
-                        _distribute_ssh_keys(ctx, spec, hostname)
-            except ValueError:
-                logger.info('Unable to parse %s succesfully' % ctx.apply_spec)
+            host_dicts = _extract_host_info_from_applied_spec(f)
+            for h in host_dicts:
+                _distribute_ssh_keys(ctx, h, hostname)
 
         mounts = {}
         mounts[pathify(ctx.apply_spec)] = '/tmp/spec.yml:ro'
@@ -5862,6 +6044,8 @@ def get_deployment_container(ctx: CephadmContext,
     c = get_container(ctx, fsid, daemon_type, daemon_id, privileged, ptrace, container_args)
     if 'extra_container_args' in ctx and ctx.extra_container_args:
         c.container_args.extend(ctx.extra_container_args)
+    if 'extra_entrypoint_args' in ctx and ctx.extra_entrypoint_args:
+        c.args.extend(ctx.extra_entrypoint_args)
     if 'config_json' in ctx and ctx.config_json:
         conf_files = get_custom_config_files(ctx.config_json)
         mandatory_keys = ['mount_path', 'content']
@@ -7109,6 +7293,13 @@ def command_rm_daemon(ctx):
          verbosity=CallVerbosity.DEBUG)
     call(ctx, ['systemctl', 'disable', unit_name],
          verbosity=CallVerbosity.DEBUG)
+
+    # force remove rgw admin socket file if leftover
+    if daemon_type in ['rgw']:
+        rgw_asok_path = f'/var/run/ceph/{ctx.fsid}/ceph-client.{ctx.name}.*.asok'
+        call(ctx, ['rm', '-rf', rgw_asok_path],
+             verbosity=CallVerbosity.DEBUG)
+
     data_dir = get_data_dir(ctx.fsid, ctx.data_dir, daemon_type, daemon_id)
     if daemon_type in ['mon', 'osd', 'prometheus'] and \
        not ctx.force_delete_data:
@@ -9594,6 +9785,12 @@ def _get_parser():
         action='append',
         default=[],
         help='Additional container arguments to apply to deamon'
+    )
+    parser_deploy.add_argument(
+        '--extra-entrypoint-args',
+        action='append',
+        default=[],
+        help='Additional entrypoint arguments to apply to deamon'
     )
 
     parser_check_host = subparsers.add_parser(

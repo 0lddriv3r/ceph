@@ -41,7 +41,7 @@ SegmentManagerGroup::read_segment_tail(segment_id_t segment)
       decode(tail, bp);
     } catch (ceph::buffer::error &e) {
       DEBUG("segment {} unable to decode tail, skipping -- {}",
-            segment, e);
+            segment, e.what());
       return crimson::ct_error::enodata::make();
     }
     DEBUG("segment {} tail {}", segment, tail);
@@ -81,7 +81,7 @@ SegmentManagerGroup::read_segment_header(segment_id_t segment)
       decode(header, bp);
     } catch (ceph::buffer::error &e) {
       DEBUG("segment {} unable to decode header, skipping -- {}",
-            segment, e);
+            segment, e.what());
       return crimson::ct_error::enodata::make();
     }
     DEBUG("segment {} header {}", segment, header);
@@ -214,8 +214,7 @@ SegmentManagerGroup::read_validate_record_metadata(
   return segment_manager.read(start, block_size
   ).safe_then([=, &segment_manager](bufferptr bptr) mutable
               -> read_validate_record_metadata_ret {
-    auto block_size = static_cast<extent_len_t>(
-        segment_manager.get_block_size());
+    auto block_size = segment_manager.get_block_size();
     bufferlist bl;
     bl.append(bptr);
     auto maybe_header = try_decode_records_header(bl, nonce);
@@ -244,7 +243,7 @@ SegmentManagerGroup::read_validate_record_metadata(
 
     auto rest_start = paddr_t::make_seg_paddr(
         seg_addr.get_segment_id(),
-        seg_addr.get_segment_off() + (seastore_off_t)block_size
+        seg_addr.get_segment_off() + block_size
     );
     auto rest_len = header.mdlength - block_size;
     TRACE("reading record group header rest {}~{}", rest_start, rest_len);
@@ -307,7 +306,7 @@ SegmentManagerGroup::consume_next_records(
         cursor.seq.segment_seq,
         next.offset
       },
-      static_cast<seastore_off_t>(total_length)
+      total_length
     }
   };
   DEBUG("processing {} at {}, budget_used={}",

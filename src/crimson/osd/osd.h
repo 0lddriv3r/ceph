@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <seastar/core/abort_source.hh>
 #include <seastar/core/future.hh>
 #include <seastar/core/shared_future.hh>
 #include <seastar/core/gate.hh>
@@ -62,6 +63,7 @@ class OSD final : public crimson::net::Dispatcher,
 		  private crimson::mgr::WithStats {
   const int whoami;
   const uint32_t nonce;
+  seastar::abort_source& abort_source;
   seastar::timer<seastar::lowres_clock> beacon_timer;
   // talk with osd
   crimson::net::MessengerRef cluster_msgr;
@@ -116,6 +118,7 @@ class OSD final : public crimson::net::Dispatcher,
 
 public:
   OSD(int id, uint32_t nonce,
+      seastar::abort_source& abort_source,
       crimson::os::FuturizedStore& store,
       crimson::net::MessengerRef cluster_msgr,
       crimson::net::MessengerRef client_msgr,
@@ -232,3 +235,7 @@ inline std::ostream& operator<<(std::ostream& out, const OSD& osd) {
 }
 
 }
+
+#if FMT_VERSION >= 90000
+template <> struct fmt::formatter<crimson::osd::OSD> : fmt::ostream_formatter {};
+#endif

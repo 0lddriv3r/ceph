@@ -55,7 +55,8 @@ ghobject_t make_temp_oid(int i) {
 
 struct seastore_test_t :
   public seastar_test_suite_t,
-  SeaStoreTestState {
+  SeaStoreTestState,
+  ::testing::WithParamInterface<const char*> {
 
   coll_t coll_name{spg_t{pg_t{0, 0}}};
   CollectionRef coll;
@@ -63,7 +64,16 @@ struct seastore_test_t :
   seastore_test_t() {}
 
   seastar::future<> set_up_fut() final {
-    return tm_setup(
+    std::string j_type = GetParam();
+    journal_type_t journal;
+    if (j_type == "segmented") {
+      journal = journal_type_t::SEGMENTED;
+    } else if (j_type == "circularbounded") {
+      journal = journal_type_t::RANDOM_BLOCK;
+    } else {
+      ceph_assert(0 == "no support");
+    }
+    return tm_setup(journal
     ).then([this] {
       return seastore->create_new_collection(coll_name);
     }).then([this](auto coll_ref) {
@@ -222,6 +232,7 @@ struct seastore_test_t :
 	bl.length(),
 	bl);
     }
+
     void write(
       SeaStore &seastore,
       uint64_t offset,
@@ -384,30 +395,41 @@ struct seastore_test_t :
     }
 
     void check_omap(SeaStore &seastore) {
-      auto iter = seastore.get_omap_iterator(coll, oid).get0();
-      iter->seek_to_first().get0();
       auto refiter = omap.begin();
-      while (true) {
-	if (!iter->valid() && refiter == omap.end())
-	  break;
-
-	if (!iter->valid() || refiter->first < iter->key()) {
-	  logger().debug(
-	    "check_omap: missing omap key {}",
-	    refiter->first);
-	  GTEST_FAIL() << "missing omap key " << refiter->first;
-	  ++refiter;
-	} else if (refiter == omap.end() || refiter->first > iter->key()) {
-	  logger().debug(
-	    "check_omap: extra omap key {}",
-	    iter->key());
-	  GTEST_FAIL() << "extra omap key" << iter->key();
-	  iter->next().get0();
-	} else {
-	  EXPECT_EQ(iter->value(), refiter->second);
-	  iter->next().get0();
-	  ++refiter;
-	}
+      std::optional<std::string> start;
+      while(true) {
+        auto [done, kvs] = seastore.omap_get_values(
+          coll,
+          oid,
+          start).unsafe_get0();
+        auto iter = kvs.begin();
+        while (true) {
+	  if ((done && iter == kvs.end()) && refiter == omap.end()) {
+	    return; // finished
+          } else if (!done && iter == kvs.end()) {
+	    break; // reload kvs
+          }
+          if (iter == kvs.end() || refiter->first < iter->first) {
+	    logger().debug(
+	      "check_omap: missing omap key {}",
+	      refiter->first);
+	    GTEST_FAIL() << "missing omap key " << refiter->first;
+	    ++refiter;
+          } else if (refiter == omap.end() || refiter->first > iter->first) {
+	    logger().debug(
+	      "check_omap: extra omap key {}",
+	      iter->first);
+	    GTEST_FAIL() << "extra omap key " << iter->first;
+            ++iter;
+          } else {
+	    EXPECT_EQ(iter->second, refiter->second);
+            ++iter;
+            ++refiter;
+          }
+        }
+        if (!done) {
+          start = kvs.rbegin()->first;
+        }
       }
     }
   };
@@ -583,7 +605,7 @@ auto contains(const T &t, const V &v) {
     v) != t.end();
 }
 
-TEST_F(seastore_test_t, collection_create_list_remove)
+TEST_P(seastore_test_t, collection_create_list_remove)
 {
   run_async([this] {
     coll_t test_coll{spg_t{pg_t{1, 0}}};
@@ -594,10 +616,15 @@ TEST_F(seastore_test_t, collection_create_list_remove)
 	t.create_collection(test_coll, 4);
 	do_transaction(std::move(t));
       }
-      auto collections = seastore->list_collections().get0();
-      EXPECT_EQ(collections.size(), 2);
-      EXPECT_TRUE(contains(collections, coll_name));
-      EXPECT_TRUE(contains(collections,  test_coll));
+      auto colls_cores = seastore->list_collections().get0();
+      std::vector<coll_t> colls;
+      colls.resize(colls_cores.size());
+      std::transform(
+        colls_cores.begin(), colls_cores.end(), colls.begin(),
+        [](auto p) { return p.first; });
+      EXPECT_EQ(colls.size(), 2);
+      EXPECT_TRUE(contains(colls, coll_name));
+      EXPECT_TRUE(contains(colls,  test_coll));
     }
 
     {
@@ -606,14 +633,19 @@ TEST_F(seastore_test_t, collection_create_list_remove)
 	t.remove_collection(test_coll);
 	do_transaction(std::move(t));
       }
-      auto collections = seastore->list_collections().get0();
-      EXPECT_EQ(collections.size(), 1);
-      EXPECT_TRUE(contains(collections, coll_name));
+      auto colls_cores = seastore->list_collections().get0();
+      std::vector<coll_t> colls;
+      colls.resize(colls_cores.size());
+      std::transform(
+        colls_cores.begin(), colls_cores.end(), colls.begin(),
+        [](auto p) { return p.first; });
+      EXPECT_EQ(colls.size(), 1);
+      EXPECT_TRUE(contains(colls, coll_name));
     }
   });
 }
 
-TEST_F(seastore_test_t, meta) {
+TEST_P(seastore_test_t, meta) {
   run_async([this] {
     set_meta("key1", "value1");
     set_meta("key2", "value2");
@@ -627,7 +659,7 @@ TEST_F(seastore_test_t, meta) {
   });
 }
 
-TEST_F(seastore_test_t, touch_stat_list_remove)
+TEST_P(seastore_test_t, touch_stat_list_remove)
 {
   run_async([this] {
     auto &test_obj = get_object(make_oid(0));
@@ -666,12 +698,12 @@ static const seastore_test_t::list_test_cases_t temp_list_cases{
   {        0, bound_t::get_temp_end(), bound_t::get_max()     },
 };
 
-TEST_F(seastore_test_t, list_objects_temp_only)
+TEST_P(seastore_test_t, list_objects_temp_only)
 {
   run_async([this] { test_list(5, 0, temp_list_cases); });
 }
 
-TEST_F(seastore_test_t, list_objects_temp_overlap)
+TEST_P(seastore_test_t, list_objects_temp_overlap)
 {
   run_async([this] { test_list(5, 5, temp_list_cases); });
 }
@@ -702,12 +734,12 @@ static const seastore_test_t::list_test_cases_t normal_list_cases{
   {        0, bound_t::get_normal_begin(), bound_t::get_max()    },
 };
 
-TEST_F(seastore_test_t, list_objects_normal_only)
+TEST_P(seastore_test_t, list_objects_normal_only)
 {
   run_async([this] { test_list(5, 0, normal_list_cases); });
 }
 
-TEST_F(seastore_test_t, list_objects_normal_overlap)
+TEST_P(seastore_test_t, list_objects_normal_overlap)
 {
   run_async([this] { test_list(5, 5, normal_list_cases); });
 }
@@ -719,7 +751,7 @@ bufferlist make_bufferlist(size_t len) {
   return bl;
 }
 
-TEST_F(seastore_test_t, omap_test_simple)
+TEST_P(seastore_test_t, omap_test_simple)
 {
   run_async([this] {
     auto &test_obj = get_object(make_oid(0));
@@ -734,7 +766,7 @@ TEST_F(seastore_test_t, omap_test_simple)
   });
 }
 
-TEST_F(seastore_test_t, attr)
+TEST_P(seastore_test_t, attr)
 {
   run_async([this] {
     auto& test_obj = get_object(make_oid(0));
@@ -873,10 +905,47 @@ TEST_F(seastore_test_t, attr)
     EXPECT_EQ(attrs.find(SS_ATTR), attrs.end());
     EXPECT_EQ(attrs.find("test_key"), attrs.end());
   }
+  {
+    // create OI_ATTR with len > onode_layout_t::MAX_OI_LENGTH, then
+    // overwrite it with another OI_ATTR len of which < onode_layout_t::MAX_OI_LENGTH
+    // create SS_ATTR with len > onode_layout_t::MAX_SS_LENGTH, then
+    // overwrite it with another SS_ATTR len of which < onode_layout_t::MAX_SS_LENGTH
+    char oi_array[onode_layout_t::MAX_OI_LENGTH + 1] = {'a'};
+    std::string oi(&oi_array[0], sizeof(oi_array));
+    bufferlist bl;
+    encode(oi, bl);
+    test_obj.set_attr(*seastore, OI_ATTR, bl);
+
+    oi = "asdfasdfasdf";
+    bl.clear();
+    encode(oi, bl);
+    test_obj.set_attr(*seastore, OI_ATTR, bl);
+
+    char ss_array[onode_layout_t::MAX_SS_LENGTH + 1] = {'b'};
+    std::string ss(&ss_array[0], sizeof(ss_array));
+    bl.clear();
+    encode(ss, bl);
+    test_obj.set_attr(*seastore, SS_ATTR, bl);
+
+    ss = "f";
+    bl.clear();
+    encode(ss, bl);
+    test_obj.set_attr(*seastore, SS_ATTR, bl);
+
+    auto attrs = test_obj.get_attrs(*seastore);
+    std::string oi2, ss2;
+    bufferlist bl2 = attrs[OI_ATTR];
+    decode(oi2, bl2);
+    bl2.clear();
+    bl2 = attrs[SS_ATTR];
+    decode(ss2, bl2);
+    EXPECT_EQ(oi, oi2);
+    EXPECT_EQ(ss, ss2);
+  }
   });
 }
 
-TEST_F(seastore_test_t, omap_test_iterator)
+TEST_P(seastore_test_t, omap_test_iterator)
 {
   run_async([this] {
     auto make_key = [](unsigned i) {
@@ -896,8 +965,37 @@ TEST_F(seastore_test_t, omap_test_iterator)
   });
 }
 
+TEST_P(seastore_test_t, object_data_omap_remove)
+{
+  run_async([this] {
+    auto make_key = [](unsigned i) {
+      std::stringstream ss;
+      ss << "key" << i;
+      return ss.str();
+    };
+    auto &test_obj = get_object(make_oid(0));
+    test_obj.touch(*seastore);
+    for (unsigned i = 0; i < 1024; ++i) {
+      test_obj.set_omap(
+	*seastore,
+	make_key(i),
+	make_bufferlist(128));
+    }
+    test_obj.check_omap(*seastore);
 
-TEST_F(seastore_test_t, simple_extent_test)
+    for (uint64_t i = 0; i < 16; i++) {
+      test_obj.write(
+	*seastore,
+	4096 * i,
+	4096,
+	'a');
+    }
+    test_obj.remove(*seastore);
+  });
+}
+
+
+TEST_P(seastore_test_t, simple_extent_test)
 {
   run_async([this] {
     auto &test_obj = get_object(make_oid(0));
@@ -914,7 +1012,7 @@ TEST_F(seastore_test_t, simple_extent_test)
   });
 }
 
-TEST_F(seastore_test_t, fiemap_empty)
+TEST_P(seastore_test_t, fiemap_empty)
 {
   run_async([this] {
     auto &test_obj = get_object(make_oid(0));
@@ -929,7 +1027,7 @@ TEST_F(seastore_test_t, fiemap_empty)
   });
 }
 
-TEST_F(seastore_test_t, fiemap_holes)
+TEST_P(seastore_test_t, fiemap_holes)
 {
   run_async([this] {
     const uint64_t MAX_EXTENTS = 100;
@@ -979,7 +1077,7 @@ TEST_F(seastore_test_t, fiemap_holes)
   });
 }
 
-TEST_F(seastore_test_t, sparse_read)
+TEST_P(seastore_test_t, sparse_read)
 {
   run_async([this] {
     const uint64_t MAX_EXTENTS = 100;
@@ -1009,7 +1107,7 @@ TEST_F(seastore_test_t, sparse_read)
   });
 }
 
-TEST_F(seastore_test_t, zero)
+TEST_P(seastore_test_t, zero)
 {
   run_async([this] {
     auto test_zero = [this](
@@ -1066,3 +1164,11 @@ TEST_F(seastore_test_t, zero)
       (BS * 4) + 128);
   });
 }
+INSTANTIATE_TEST_SUITE_P(
+  seastore_test,
+  seastore_test_t,
+  ::testing::Values (
+    "segmented",
+    "circularbounded"
+  )
+);

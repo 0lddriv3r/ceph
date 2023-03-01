@@ -266,6 +266,7 @@ def configure_rgw_credentials():
         raise NoCredentialsException
 
 
+# pylint: disable=R0904
 class RgwClient(RestClient):
     _host = None
     _port = None
@@ -645,6 +646,50 @@ class RgwClient(RestClient):
                                      http_status_code=error.status_code,
                                      component='rgw')
 
+    @RestClient.api_get('/{bucket_name}?encryption')
+    def get_bucket_encryption(self, bucket_name, request=None):
+        # pylint: disable=unused-argument
+        try:
+            result = request()  # type: ignore
+            result['Status'] = 'Enabled'
+            return result
+        except RequestException as e:
+            if e.content:
+                content = json_str_to_object(e.content)
+                if content.get(
+                        'Code') == 'ServerSideEncryptionConfigurationNotFoundError':
+                    return {
+                        'Status': 'Disabled',
+                    }
+            raise e
+
+    @RestClient.api_delete('/{bucket_name}?encryption')
+    def delete_bucket_encryption(self, bucket_name, request=None):
+        # pylint: disable=unused-argument
+        result = request()  # type: ignore
+        return result
+
+    @RestClient.api_put('/{bucket_name}?encryption')
+    def set_bucket_encryption(self, bucket_name, key_id,
+                              sse_algorithm, request: Optional[object] = None):
+        # pylint: disable=unused-argument
+        encryption_configuration = ET.Element('ServerSideEncryptionConfiguration')
+        rule_element = ET.SubElement(encryption_configuration, 'Rule')
+        default_encryption_element = ET.SubElement(rule_element,
+                                                   'ApplyServerSideEncryptionByDefault')
+        sse_algo_element = ET.SubElement(default_encryption_element,
+                                         'SSEAlgorithm')
+        sse_algo_element.text = sse_algorithm
+        if sse_algorithm == 'aws:kms':
+            kms_master_key_element = ET.SubElement(default_encryption_element,
+                                                   'KMSMasterKeyID')
+            kms_master_key_element.text = key_id
+        data = ET.tostring(encryption_configuration, encoding='unicode')
+        try:
+            _ = request(data=data)  # type: ignore
+        except RequestException as e:
+            raise DashboardException(msg=str(e), component='rgw')
+
     @RestClient.api_get('/{bucket_name}?object-lock')
     def get_bucket_locking(self, bucket_name, request=None):
         # type: (str, Optional[object]) -> dict
@@ -741,6 +786,15 @@ class RgwClient(RestClient):
             _ = request(data=data)  # type: ignore
         except RequestException as e:
             raise DashboardException(msg=str(e), component='rgw')
+
+    def list_roles(self) -> List[Dict[str, Any]]:
+        rgw_list_roles_command = ['role', 'list']
+        code, roles, err = mgr.send_rgwadmin_command(rgw_list_roles_command)
+        if code < 0:
+            logger.warning('Error listing roles with code %d: %s', code, err)
+            return []
+
+        return roles
 
     def perform_validations(self, retention_period_days, retention_period_years, mode):
         try:

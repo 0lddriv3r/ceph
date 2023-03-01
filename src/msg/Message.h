@@ -15,11 +15,15 @@
 #ifndef CEPH_MESSAGE_H
 #define CEPH_MESSAGE_H
 
+#include <concepts>
 #include <cstdlib>
 #include <ostream>
 #include <string_view>
 
 #include <boost/intrusive/list.hpp>
+#if FMT_VERSION >= 90000
+#include <fmt/ostream.h>
+#endif
 
 #include "include/Context.h"
 #include "common/RefCountedObj.h"
@@ -174,6 +178,7 @@
 #define MSG_MDS_OPENINOREPLY       0x210
 #define MSG_MDS_SNAPUPDATE         0x211
 #define MSG_MDS_FRAGMENTNOTIFYACK  0x212
+#define MSG_MDS_DENTRYUNLINK_ACK   0x213
 #define MSG_MDS_LOCK               0x300 // 0x3xx are for locker of mds
 #define MSG_MDS_INODEFILECAPS      0x301
 
@@ -569,4 +574,9 @@ MURef<T> make_message(Args&&... args) {
   return {new T(std::forward<Args>(args)...), TOPNSPC::common::UniquePtrDeleter{}};
 }
 }
+
+#if FMT_VERSION >= 90000
+template <std::derived_from<Message> M> struct fmt::formatter<M> : fmt::ostream_formatter {};
+#endif
+
 #endif

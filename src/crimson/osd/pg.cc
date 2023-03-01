@@ -14,12 +14,15 @@
 #include <fmt/format.h>
 #include <fmt/ostream.h>
 
+#include "common/hobject_fmt.h"
+
 #include "messages/MOSDOp.h"
 #include "messages/MOSDOpReply.h"
 #include "messages/MOSDRepOp.h"
 #include "messages/MOSDRepOpReply.h"
 
 #include "osd/OSDMap.h"
+#include "osd/osd_types_fmt.h"
 
 #include "os/Transaction.h"
 
@@ -34,8 +37,11 @@
 #include "crimson/osd/ops_executer.h"
 #include "crimson/osd/osd_operations/osdop_params.h"
 #include "crimson/osd/osd_operations/peering_event.h"
+#include "crimson/osd/osd_operations/background_recovery.h"
+#include "crimson/osd/osd_operations/snaptrim_event.h"
 #include "crimson/osd/pg_recovery.h"
 #include "crimson/osd/replicated_recovery_backend.h"
+#include "crimson/osd/watch.h"
 
 using std::ostream;
 using std::set;
@@ -57,6 +63,17 @@ std::ostream& operator<<(std::ostream& out, const signedspan& d)
   return out;
 }
 }
+
+template <typename T>
+struct fmt::formatter<std::optional<T>> : fmt::formatter<T> {
+  template <typename FormatContext>
+  auto format(const std::optional<T>& v, FormatContext& ctx) const {
+    if (v.has_value()) {
+      return fmt::formatter<T>::format(*v, ctx);
+    }
+    return fmt::format_to(ctx.out(), "<null>");
+  }
+};
 
 namespace crimson::osd {
 
@@ -101,7 +118,8 @@ PG::PG(
 	pool,
 	coll_ref,
 	shard_services,
-	profile)),
+	profile,
+	*this)),
     recovery_backend(
       std::make_unique<ReplicatedRecoveryBackend>(
 	*this, shard_services, coll_ref, backend.get())),
@@ -119,6 +137,23 @@ PG::PG(
       osdmap,
       this,
       this),
+    obc_registry{
+      local_conf()},
+    obc_loader{
+      obc_registry,
+      *backend.get(),
+      *this},
+    osdriver(
+      &shard_services.get_store(),
+      coll_ref,
+      pgid.make_pgmeta_oid()),
+    snap_mapper(
+      this->shard_services.get_cct(),
+      &osdriver,
+      pgid.ps(),
+      pgid.get_split_bits(pool.get_pg_num()),
+      pgid.pool(),
+      pgid.shard),
     wait_for_active_blocker(this)
 {
   peering_state.set_backend_predicates(
@@ -265,8 +300,21 @@ unsigned PG::get_target_pg_log_entries() const
   }
 }
 
-void PG::on_activate(interval_set<snapid_t>)
+void PG::on_removal(ceph::os::Transaction &t) {
+  t.register_on_commit(
+    new LambdaContext(
+      [this](int r) {
+      ceph_assert(r == 0);
+      (void)shard_services.start_operation<LocalPeeringEvent>(
+        this, pg_whoami, pgid, float(0.001), get_osdmap_epoch(),
+        get_osdmap_epoch(), PeeringState::DeleteSome());
+  }));
+}
+
+void PG::on_activate(interval_set<snapid_t> snaps)
 {
+  logger().debug("{}: {} snaps={}", *this, __func__, snaps);
+  snap_trimq = std::move(snaps);
   projected_last_update = peering_state.get_info().last_update;
 }
 
@@ -309,7 +357,6 @@ void PG::on_activate_complete()
       PeeringState::AllReplicasRecovered{});
   }
   publish_stats_to_osd();
-  backend->on_activate_complete();
 }
 
 void PG::prepare_write(pg_info_t &info,
@@ -353,8 +400,122 @@ void PG::prepare_write(pg_info_t &info,
 std::pair<ghobject_t, bool>
 PG::do_delete_work(ceph::os::Transaction &t, ghobject_t _next)
 {
-  // TODO
-  return {_next, false};
+  logger().info("removing pg {}", pgid);
+  auto fut = interruptor::make_interruptible(
+    shard_services.get_store().list_objects(
+      coll_ref,
+      _next,
+      ghobject_t::get_max(),
+      local_conf()->osd_target_transaction_size));
+
+  auto [objs_to_rm, next] = fut.get();
+  if (objs_to_rm.empty()) {
+    logger().info("all objs removed, removing coll for {}", pgid);
+    t.remove(coll_ref->get_cid(), pgmeta_oid);
+    t.remove_collection(coll_ref->get_cid());
+    (void) shard_services.get_store().do_transaction(
+      coll_ref, std::move(t)).then([this] {
+      return shard_services.remove_pg(pgid);
+    });
+    return {next, false};
+  } else {
+    for (auto &obj : objs_to_rm) {
+      if (obj == pgmeta_oid) {
+        continue;
+      }
+      logger().trace("pg {}, removing obj {}", pgid, obj);
+      t.remove(coll_ref->get_cid(), obj);
+    }
+    t.register_on_commit(
+      new LambdaContext([this](int r) {
+      ceph_assert(r == 0);
+      logger().trace("triggering more pg delete {}", pgid);
+      (void) shard_services.start_operation<LocalPeeringEvent>(
+        this,
+        pg_whoami,
+        pgid,
+        float(0.001),
+        get_osdmap_epoch(),
+        get_osdmap_epoch(),
+        PeeringState::DeleteSome{});
+    }));
+    return {next, true};
+  }
+}
+
+Context *PG::on_clean()
+{
+  // Not needed yet (will be needed for IO unblocking)
+  return nullptr;
+}
+
+void PG::on_active_actmap()
+{
+  logger().debug("{}: {} snap_trimq={}", *this, __func__, snap_trimq);
+  peering_state.state_clear(PG_STATE_SNAPTRIM_ERROR);
+  std::ignore = seastar::do_until(
+    [this] { return snap_trimq.empty()
+                    && !peering_state.state_test(PG_STATE_SNAPTRIM_ERROR);
+    },
+    [this] {
+      peering_state.state_set(PG_STATE_SNAPTRIM);
+      publish_stats_to_osd();
+      const auto to_trim = snap_trimq.range_start();
+      snap_trimq.erase(to_trim);
+      const auto needs_pause = !snap_trimq.empty();
+      return seastar::repeat([to_trim, needs_pause, this] {
+        logger().debug("{}: going to start SnapTrimEvent, to_trim={}",
+                       *this, to_trim);
+        return shard_services.start_operation<SnapTrimEvent>(
+          this,
+          snap_mapper,
+          to_trim,
+          needs_pause
+        ).second.handle_error(
+          crimson::ct_error::enoent::handle([this] {
+            logger().error("{}: ENOENT saw, trimming stopped", *this);
+            peering_state.state_set(PG_STATE_SNAPTRIM_ERROR);
+            publish_stats_to_osd();
+            return seastar::make_ready_future<seastar::stop_iteration>(
+              seastar::stop_iteration::yes);
+          }), crimson::ct_error::eagain::handle([this] {
+            logger().info("{}: EAGAIN saw, trimming restarted", *this);
+            return seastar::make_ready_future<seastar::stop_iteration>(
+              seastar::stop_iteration::no);
+          })
+        );
+      }).then([this, trimmed=to_trim] {
+        logger().debug("{}: trimmed snap={}", *this, trimmed);
+      });
+    }).finally([this] {
+      peering_state.state_clear(PG_STATE_SNAPTRIM);
+      publish_stats_to_osd();
+    });
+}
+
+void PG::on_active_advmap(const OSDMapRef &osdmap)
+{
+  const auto new_removed_snaps = osdmap->get_new_removed_snaps();
+  if (auto it = new_removed_snaps.find(get_pgid().pool());
+      it != new_removed_snaps.end()) {
+    bool bad = false;
+    for (auto j : it->second) {
+      if (snap_trimq.intersects(j.first, j.second)) {
+	decltype(snap_trimq) added, overlap;
+	added.insert(j.first, j.second);
+	overlap.intersection_of(snap_trimq, added);
+        logger().error("{}: {} removed_snaps already contains {}",
+                       *this, __func__, overlap);
+	bad = true;
+	snap_trimq.union_of(added);
+      } else {
+	snap_trimq.insert(j.first, j.second);
+      }
+    }
+    logger().info("{}: {} new removed snaps {}, snap_trimq now{}",
+                  *this, __func__, it->second, snap_trimq);
+    assert(!bad || local_conf().get_val<bool>("osd_debug_verify_cached_snaps"));
+  }
 }
 
 void PG::scrub_requested(scrub_level_t scrub_level, scrub_type_t scrub_type)
@@ -477,49 +638,61 @@ seastar::future<> PG::read_state(crimson::os::FuturizedStore* store)
   });
 }
 
-void PG::do_peering_event(
+PG::interruptible_future<> PG::do_peering_event(
   PGPeeringEvent& evt, PeeringCtx &rctx)
 {
   if (peering_state.pg_has_reset_since(evt.get_epoch_requested()) ||
       peering_state.pg_has_reset_since(evt.get_epoch_sent())) {
     logger().debug("{} ignoring {} -- pg has reset", __func__, evt.get_desc());
+    return interruptor::now();
   } else {
     logger().debug("{} handling {} for pg: {}", __func__, evt.get_desc(), pgid);
-    peering_state.handle_event(
-      evt.get_event(),
-      &rctx);
-    peering_state.write_if_dirty(rctx.transaction);
+    // all peering event handling needs to be run in a dedicated seastar::thread,
+    // so that event processing can involve I/O reqs freely, for example: PG::on_removal,
+    // PG::on_new_interval
+    return interruptor::async([this, &evt, &rctx] {
+      peering_state.handle_event(
+        evt.get_event(),
+        &rctx);
+      peering_state.write_if_dirty(rctx.transaction);
+    });
   }
 }
 
-void PG::handle_advance_map(
+seastar::future<> PG::handle_advance_map(
   cached_map_t next_map, PeeringCtx &rctx)
 {
-  vector<int> newup, newacting;
-  int up_primary, acting_primary;
-  next_map->pg_to_up_acting_osds(
-    pgid.pgid,
-    &newup, &up_primary,
-    &newacting, &acting_primary);
-  peering_state.advance_map(
-    next_map,
-    peering_state.get_osdmap(),
-    newup,
-    up_primary,
-    newacting,
-    acting_primary,
-    rctx);
-  osdmap_gate.got_map(next_map->get_epoch());
+  return seastar::async([this, next_map=std::move(next_map), &rctx] {
+    vector<int> newup, newacting;
+    int up_primary, acting_primary;
+    next_map->pg_to_up_acting_osds(
+      pgid.pgid,
+      &newup, &up_primary,
+      &newacting, &acting_primary);
+    peering_state.advance_map(
+      next_map,
+      peering_state.get_osdmap(),
+      newup,
+      up_primary,
+      newacting,
+      acting_primary,
+      rctx);
+    osdmap_gate.got_map(next_map->get_epoch());
+  });
 }
 
-void PG::handle_activate_map(PeeringCtx &rctx)
+seastar::future<> PG::handle_activate_map(PeeringCtx &rctx)
 {
-  peering_state.activate_map(rctx);
+  return seastar::async([this, &rctx] {
+    peering_state.activate_map(rctx);
+  });
 }
 
-void PG::handle_initialize(PeeringCtx &rctx)
+seastar::future<> PG::handle_initialize(PeeringCtx &rctx)
 {
-  peering_state.handle_event(PeeringState::Initialize{}, &rctx);
+  return seastar::async([this, &rctx] {
+    peering_state.handle_event(PeeringState::Initialize{}, &rctx);
+  });
 }
 
 
@@ -564,10 +737,7 @@ PG::submit_transaction(
   }
 
   epoch_t map_epoch = get_osdmap_epoch();
-
-  if (__builtin_expect(osd_op_p.at_version.epoch != map_epoch, false)) {
-    throw crimson::common::actingset_changed(is_primary());
-  }
+  ceph_assert(!has_reset_since(osd_op_p.at_version.epoch));
 
   peering_state.pre_submit_op(obc->obs.oi.soid, log_entries, osd_op_p.at_version);
   peering_state.append_log_with_trim_to_updated(std::move(log_entries), osd_op_p.at_version,
@@ -618,7 +788,7 @@ PG::do_osd_ops_execute(
 {
   assert(ox);
   auto rollbacker = ox->create_rollbacker([this] (auto& obc) {
-    return reload_obc(obc).handle_error_interruptible(
+    return obc_loader.reload_obc(obc).handle_error_interruptible(
       load_obc_ertr::assert_all{"can't live with object state messed up"});
   });
   auto failure_func_ptr = seastar::make_lw_shared(std::move(failure_func));
@@ -662,7 +832,10 @@ PG::do_osd_ops_execute(
             crimson::ct_error::eagain::make()));
       }
     }
-    return std::move(*ox).flush_changes_n_do_ops_effects(ops,
+    return std::move(*ox).flush_changes_n_do_ops_effects(
+      ops,
+      snap_mapper,
+      osdriver,
       [this] (auto&& txn,
               auto&& obc,
               auto&& osd_op_p,
@@ -978,196 +1151,20 @@ RWState::State PG::get_lock_type(const OpInfo &op_info)
   }
 }
 
-std::optional<hobject_t> PG::resolve_oid(
-  const SnapSet &ss,
-  const hobject_t &oid)
+void PG::check_blocklisted_obc_watchers(
+  ObjectContextRef &obc)
 {
-  logger().debug("{} oid.snap={},head snapset.seq={}",
-                 __func__, oid.snap, ss.seq);
-  if (oid.snap > ss.seq) {
-    // Because oid.snap > ss.seq, we are trying to read from a snapshot
-    // taken after the most recent write to this object. Read from head.
-    return oid.get_head();
-  } else {
-    // which clone would it be?
-    auto clone = std::lower_bound(
-      begin(ss.clones), end(ss.clones),
-      oid.snap);
-    if (clone == end(ss.clones)) {
-      // Doesn't exist, > last clone, < ss.seq
-      return std::nullopt;
-    }
-    auto citer = ss.clone_snaps.find(*clone);
-    // TODO: how do we want to handle this kind of logic error?
-    ceph_assert(citer != ss.clone_snaps.end());
-
-    if (std::find(
-	  citer->second.begin(),
-	  citer->second.end(),
-	  *clone) == citer->second.end()) {
-      return std::nullopt;
-    } else {
-      auto soid = oid;
-      soid.snap = *clone;
-      return std::optional<hobject_t>(soid);
+  if (obc->watchers.empty()) {
+    for (auto &[src, winfo] : obc->obs.oi.watchers) {
+      auto watch = crimson::osd::Watch::create(
+        obc, winfo, src.second, this);
+      watch->disconnect();
+      auto [it, emplaced] = obc->watchers.emplace(src, std::move(watch));
+      assert(emplaced);
+      logger().debug("added watch for obj {}, client {}",
+        obc->get_oid(), src.second);
     }
   }
-}
-
-template<RWState::State State>
-PG::load_obc_iertr::future<>
-PG::with_head_obc(ObjectContextRef obc, bool existed, with_obc_func_t&& func)
-{
-  logger().debug("{} {}", __func__, obc->get_oid());
-  assert(obc->is_head());
-  obc->append_to(obc_set_accessing);
-  return obc->with_lock<State, IOInterruptCondition>(
-    [existed=existed, obc=obc, func=std::move(func), this] {
-    auto loaded = load_obc_iertr::make_ready_future<ObjectContextRef>(obc);
-    if (existed) {
-      logger().debug("with_head_obc: found {} in cache", obc->get_oid());
-    } else {
-      logger().debug("with_head_obc: cache miss on {}", obc->get_oid());
-      loaded = obc->with_promoted_lock<State, IOInterruptCondition>([this, obc] {
-        return load_head_obc(obc);
-      });
-    }
-    return loaded.safe_then_interruptible([func = std::move(func)](auto obc) {
-      return std::move(func)(std::move(obc));
-    });
-  }).finally([this, pgref=boost::intrusive_ptr<PG>{this}, obc=std::move(obc)] {
-    logger().debug("with_head_obc: released {}", obc->get_oid());
-    obc->remove_from(obc_set_accessing);
-  });
-}
-
-template<RWState::State State>
-PG::load_obc_iertr::future<>
-PG::with_head_obc(hobject_t oid, with_obc_func_t&& func)
-{
-  auto [obc, existed] =
-    shard_services.get_cached_obc(std::move(oid));
-  return with_head_obc<State>(std::move(obc), existed, std::move(func));
-}
-
-template<RWState::State State>
-PG::interruptible_future<>
-PG::with_existing_head_obc(ObjectContextRef obc, with_obc_func_t&& func)
-{
-  constexpr bool existed = true;
-  return with_head_obc<State>(
-    std::move(obc), existed, std::move(func)
-  ).handle_error_interruptible(load_obc_ertr::assert_all{"can't happen"});
-}
-
-template<RWState::State State>
-PG::load_obc_iertr::future<>
-PG::with_clone_obc(hobject_t oid, with_obc_func_t&& func)
-{
-  assert(!oid.is_head());
-  return with_head_obc<RWState::RWREAD>(oid.get_head(),
-    [oid, func=std::move(func), this](auto head) -> load_obc_iertr::future<> {
-    if (!head->obs.exists) {
-      logger().error("with_clone_obc: {} head doesn't exist", head->obs.oi.soid);
-      return load_obc_iertr::future<>{crimson::ct_error::object_corrupted::make()};
-    }
-    auto coid = resolve_oid(head->get_ro_ss(), oid);
-    if (!coid) {
-      logger().error("with_clone_obc: {} clone not found", coid);
-      return load_obc_iertr::future<>{crimson::ct_error::object_corrupted::make()};
-    }
-    auto [clone, existed] = shard_services.get_cached_obc(*coid);
-    return clone->template with_lock<State, IOInterruptCondition>(
-      [existed=existed, head=std::move(head), clone=std::move(clone),
-       func=std::move(func), this]() -> load_obc_iertr::future<> {
-      auto loaded = load_obc_iertr::make_ready_future<ObjectContextRef>(clone);
-      if (existed) {
-        logger().debug("with_clone_obc: found {} in cache", clone->get_oid());
-      } else {
-        logger().debug("with_clone_obc: cache miss on {}", clone->get_oid());
-        //TODO: generalize load_head_obc -> load_obc (support head/clone obc)
-        loaded = clone->template with_promoted_lock<State, IOInterruptCondition>(
-          [clone, head, this] {
-          return backend->load_metadata(clone->get_oid()).safe_then_interruptible(
-            [clone=std::move(clone), head=std::move(head)](auto md) mutable {
-            clone->set_clone_state(std::move(md->os), std::move(head));
-            return clone;
-          });
-        });
-      }
-      return loaded.safe_then_interruptible([func = std::move(func)](auto clone) {
-        return std::move(func)(std::move(clone));
-      });
-    });
-  });
-}
-
-// explicitly instantiate the used instantiations
-template PG::load_obc_iertr::future<>
-PG::with_head_obc<RWState::RWNONE>(hobject_t, with_obc_func_t&&);
-
-template<RWState::State State>
-PG::interruptible_future<>
-PG::with_existing_clone_obc(ObjectContextRef clone, with_obc_func_t&& func)
-{
-  assert(clone);
-  assert(clone->get_head_obc());
-  assert(!clone->get_oid().is_head());
-  return with_existing_head_obc<RWState::RWREAD>(clone->get_head_obc(),
-    [clone=std::move(clone), func=std::move(func)] ([[maybe_unused]] auto head) {
-    assert(head == clone->get_head_obc());
-    return clone->template with_lock<State>(
-      [clone=std::move(clone), func=std::move(func)] {
-      return std::move(func)(std::move(clone));
-    });
-  });
-}
-
-PG::load_obc_iertr::future<crimson::osd::ObjectContextRef>
-PG::load_head_obc(ObjectContextRef obc)
-{
-  return backend->load_metadata(obc->get_oid()).safe_then_interruptible(
-    [obc=std::move(obc)](auto md)
-    -> load_obc_ertr::future<crimson::osd::ObjectContextRef> {
-    const hobject_t& oid = md->os.oi.soid;
-    logger().debug(
-      "load_head_obc: loaded obs {} for {}", md->os.oi, oid);
-    if (!md->ssc) {
-      logger().error(
-        "load_head_obc: oid {} missing snapsetcontext", oid);
-      return crimson::ct_error::object_corrupted::make();
-
-    }
-    obc->set_head_state(std::move(md->os), std::move(md->ssc));
-    logger().debug(
-      "load_head_obc: returning obc {} for {}",
-      obc->obs.oi, obc->obs.oi.soid);
-    return load_obc_ertr::make_ready_future<
-      crimson::osd::ObjectContextRef>(obc);
-  });
-}
-
-PG::load_obc_iertr::future<>
-PG::reload_obc(crimson::osd::ObjectContext& obc) const
-{
-  assert(obc.is_head());
-  return backend->load_metadata(obc.get_oid()).safe_then_interruptible<false>([&obc](auto md)
-    -> load_obc_ertr::future<> {
-    logger().debug(
-      "{}: reloaded obs {} for {}",
-      __func__,
-      md->os.oi,
-      obc.get_oid());
-    if (!md->ssc) {
-      logger().error(
-        "{}: oid {} missing snapsetcontext",
-        __func__,
-        obc.get_oid());
-      return crimson::ct_error::object_corrupted::make();
-    }
-    obc.set_head_state(std::move(md->os), std::move(md->ssc));
-    return load_obc_ertr::now();
-  });
 }
 
 PG::load_obc_iertr::future<>
@@ -1179,49 +1176,21 @@ PG::with_locked_obc(const hobject_t &hobj,
     throw crimson::common::system_shutdown_exception();
   }
   const hobject_t oid = get_oid(hobj);
+  auto wrapper = [f=std::move(f), this](auto obc) {
+    check_blocklisted_obc_watchers(obc);
+    return f(obc);
+  };
   switch (get_lock_type(op_info)) {
   case RWState::RWREAD:
-    if (oid.is_head()) {
-      return with_head_obc<RWState::RWREAD>(oid, std::move(f));
-    } else {
-      return with_clone_obc<RWState::RWREAD>(oid, std::move(f));
-    }
+      return obc_loader.with_obc<RWState::RWREAD>(oid, std::move(wrapper));
   case RWState::RWWRITE:
-    if (oid.is_head()) {
-      return with_head_obc<RWState::RWWRITE>(oid, std::move(f));
-    } else {
-      return with_clone_obc<RWState::RWWRITE>(oid, std::move(f));
-    }
+      return obc_loader.with_obc<RWState::RWWRITE>(oid, std::move(wrapper));
   case RWState::RWEXCL:
-    if (oid.is_head()) {
-      return with_head_obc<RWState::RWEXCL>(oid, std::move(f));
-    } else {
-      return with_clone_obc<RWState::RWEXCL>(oid, std::move(f));
-    }
+      return obc_loader.with_obc<RWState::RWEXCL>(oid, std::move(wrapper));
   default:
     ceph_abort();
   };
 }
-
-template <RWState::State State>
-PG::interruptible_future<>
-PG::with_locked_obc(ObjectContextRef obc, with_obc_func_t &&f)
-{
-  // TODO: a question from rebase: do we really need such checks when
-  // the interruptible stuff is being used?
-  if (__builtin_expect(stopping, false)) {
-    throw crimson::common::system_shutdown_exception();
-  }
-  if (obc->is_head()) {
-    return with_existing_head_obc<State>(obc, std::move(f));
-  } else {
-    return with_existing_clone_obc<State>(obc, std::move(f));
-  }
-}
-
-// explicitly instantiate the used instantiations
-template PG::interruptible_future<>
-PG::with_locked_obc<RWState::RWEXCL>(ObjectContextRef, with_obc_func_t&&);
 
 PG::interruptible_future<> PG::handle_rep_op(Ref<MOSDRepOp> req)
 {
@@ -1395,11 +1364,9 @@ seastar::future<> PG::stop()
 
 void PG::on_change(ceph::os::Transaction &t) {
   logger().debug("{} {}:", *this, __func__);
-  for (auto& obc : obc_set_accessing) {
-    obc.interrupt(::crimson::common::actingset_changed(is_primary()));
-  }
+  obc_loader.notify_on_change(is_primary());
   recovery_backend->on_peering_interval_change(t);
-  backend->on_actingset_changed({ is_primary() });
+  backend->on_actingset_changed(is_primary());
   wait_for_active_blocker.unblock();
   if (is_primary()) {
     logger().debug("{} {}: requeueing", *this, __func__);

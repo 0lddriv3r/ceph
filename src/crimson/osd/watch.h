@@ -68,6 +68,7 @@ public:
   ~Watch();
 
   seastar::future<> connect(crimson::net::ConnectionFRef, bool);
+  void disconnect();
   bool is_alive() const {
     return true;
   }
@@ -235,3 +236,7 @@ seastar::future<> Notify::create_n_propagate(
 } // namespace crimson::osd
 
 WRITE_CLASS_DENC(crimson::osd::notify_reply_t)
+
+#if FMT_VERSION >= 90000
+template <> struct fmt::formatter<crimson::osd::notify_reply_t> : fmt::ostream_formatter {};
+#endif

@@ -785,6 +785,10 @@ inline std::ostream& operator<<(std::ostream& out, const coll_t& c) {
   return out;
 }
 
+#if FMT_VERSION >= 90000
+template <> struct fmt::formatter<coll_t> : fmt::ostream_formatter {};
+#endif
+
 namespace std {
   template<> struct hash<coll_t> {
     size_t operator()(const coll_t &c) const { 
@@ -1231,6 +1235,10 @@ struct pg_pool_t {
     FLAG_CREATING = 1<<15,          // initial pool PGs are being created
     FLAG_EIO = 1<<16,               // return EIO for all client ops
     FLAG_BULK = 1<<17, //pool is large
+    // PGs from this pool are allowed to be created on crimson osds.
+    // Pool features are restricted to those supported by crimson-osd.
+    // Note, does not prohibit being created on classic osd.
+    FLAG_CRIMSON = 1<<18,
   };
 
   static const char *get_flag_name(uint64_t f) {
@@ -1253,6 +1261,7 @@ struct pg_pool_t {
     case FLAG_CREATING: return "creating";
     case FLAG_EIO: return "eio";
     case FLAG_BULK: return "bulk";
+    case FLAG_CRIMSON: return "crimson";
     default: return "???";
     }
   }
@@ -1307,6 +1316,8 @@ struct pg_pool_t {
       return FLAG_EIO;
     if (name == "bulk")
       return FLAG_BULK;
+    if (name == "crimson")
+      return FLAG_CRIMSON;
     return 0;
   }
 
@@ -1493,6 +1504,10 @@ public:
     hit_set_grade_decay_rate = 0;
     hit_set_search_last_n = 0;
     grade_table.resize(0);
+  }
+
+  bool has_snaps() const {
+    return snaps.size() > 0;
   }
 
   bool is_stretch_pool() const {
@@ -1703,6 +1718,10 @@ public:
 
   bool allows_ecoverwrites() const {
     return has_flag(FLAG_EC_OVERWRITES);
+  }
+
+  bool is_crimson() const {
+    return has_flag(FLAG_CRIMSON);
   }
 
   bool can_shift_osds() const {
@@ -4711,6 +4730,9 @@ struct pg_missing_item {
 };
 WRITE_CLASS_ENCODER_FEATURES(pg_missing_item)
 std::ostream& operator<<(std::ostream& out, const pg_missing_item &item);
+#if FMT_VERSION >= 90000
+template <> struct fmt::formatter<pg_missing_item> : fmt::ostream_formatter {};
+#endif
 
 class pg_missing_const_i {
 public:
@@ -5423,6 +5445,8 @@ public:
   epoch_t purged_snaps_last = 0;
   utime_t last_purged_snaps_scrub;
 
+  epoch_t cluster_osdmap_trim_lower_bound = 0;
+
   void encode(ceph::buffer::list &bl) const;
   void decode(ceph::buffer::list::const_iterator &bl);
   void dump(ceph::Formatter *f) const;
@@ -5438,6 +5462,7 @@ inline std::ostream& operator<<(std::ostream& out, const OSDSuperblock& sb)
              << " e" << sb.current_epoch
              << " [" << sb.oldest_map << "," << sb.newest_map << "]"
 	     << " lci=[" << sb.mounted << "," << sb.clean_thru << "]"
+             << " tlb=" << sb.cluster_osdmap_trim_lower_bound
              << ")";
 }
 

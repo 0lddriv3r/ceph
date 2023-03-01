@@ -606,7 +606,7 @@ class LocalCephFSMount():
         # Load the asok path from ceph.conf as vstart.sh now puts admin sockets
         # in a tmpdir. All of the paths are the same, so no need to select
         # based off of the service type.
-        d = "./out"
+        d = "./asok"
         with open(self.config_path) as f:
             for line in f:
                 asok_conf = re.search("^\s*admin\s+socket\s*=\s*(.*?)[^/]+$", line)
@@ -705,18 +705,18 @@ class LocalFuseMount(LocalCephFSMount, FuseMount):
     def _create_mntpt(self):
         self.client_remote.run(args=f'mkdir -p -v {self.hostfs_mntpt}')
 
-    def _run_mount_cmd(self, mntopts, check_status):
-        retval = super(type(self), self)._run_mount_cmd(mntopts, check_status)
+    def _run_mount_cmd(self, mntopts, mntargs, check_status):
+        retval = super(type(self), self)._run_mount_cmd(mntopts, mntargs,
+                                                        check_status)
         if retval is None: # None represents success
             self._set_fuse_daemon_pid(check_status)
         return retval
 
-    def _get_mount_cmd(self, mntopts):
-        mount_cmd = super(type(self), self)._get_mount_cmd(mntopts)
+    def _get_mount_cmd(self, mntopts, mntargs):
+        mount_cmd = super(type(self), self)._get_mount_cmd(mntopts, mntargs)
 
         if os.getuid() != 0:
             mount_cmd += ['--client_die_on_failed_dentry_invalidate=false']
-
         return mount_cmd
 
     @property
@@ -1069,7 +1069,10 @@ class LogRotate():
 
 def teardown_cluster():
     log.info('\ntearing down the cluster...')
-    remote.run(args=[os.path.join(SRC_PREFIX, "stop.sh")], timeout=60)
+    try:
+        remote.run(args=[os.path.join(SRC_PREFIX, "stop.sh")], timeout=60)
+    except CommandFailedError as e:
+        log.error('stop.sh failed: %s', e)
     log.info('\nceph cluster torn down')
     remote.run(args=['rm', '-rf', './dev', './out'])
 

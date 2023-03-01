@@ -255,7 +255,14 @@ class CephCluster(object):
         proc = self.mon_manager.admin_socket(service_type, service_id, command, timeout=timeout)
         response_data = proc.stdout.getvalue().strip()
         if len(response_data) > 0:
-            j = json.loads(response_data)
+
+            def get_nonnumeric_values(value):
+                c = {"NaN": float("nan"), "Infinity": float("inf"),
+                     "-Infinity": -float("inf")}
+                return c[value]
+
+            j = json.loads(response_data.replace('inf', 'Infinity'),
+                           parse_constant=get_nonnumeric_values)
             pretty = json.dumps(j, sort_keys=True, indent=2)
             log.debug(f"_json_asok output\n{pretty}")
             return j
@@ -587,6 +594,12 @@ class Filesystem(MDSCluster):
 
     def set_allow_new_snaps(self, yes):
         self.set_var("allow_new_snaps", yes, '--yes-i-really-mean-it')
+
+    def set_bal_rank_mask(self, bal_rank_mask):
+        self.set_var("bal_rank_mask", bal_rank_mask)
+
+    def set_refuse_client_session(self, yes):
+        self.set_var("refuse_client_session", yes)
 
     def compat(self, *args):
         a = map(lambda x: str(x).lower(), args)

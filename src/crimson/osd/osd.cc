@@ -8,6 +8,7 @@
 #include <boost/iterator/counting_iterator.hpp>
 #include <boost/range/join.hpp>
 #include <fmt/format.h>
+#include <fmt/os.h>
 #include <fmt/ostream.h>
 #include <seastar/core/timer.hh>
 
@@ -75,6 +76,7 @@ using crimson::os::FuturizedStore;
 namespace crimson::osd {
 
 OSD::OSD(int id, uint32_t nonce,
+	 seastar::abort_source& abort_source,
          crimson::os::FuturizedStore& store,
          crimson::net::MessengerRef cluster_msgr,
          crimson::net::MessengerRef public_msgr,
@@ -82,6 +84,7 @@ OSD::OSD(int id, uint32_t nonce,
          crimson::net::MessengerRef hb_back_msgr)
   : whoami{id},
     nonce{nonce},
+    abort_source{abort_source},
     // do this in background
     beacon_timer{[this] { (void)send_beacon(); }},
     cluster_msgr{cluster_msgr},
@@ -376,7 +379,7 @@ seastar::future<> OSD::start()
     );
   }).then([this](OSDSuperblock&& sb) {
     superblock = std::move(sb);
-    pg_shard_manager.set_superblock(sb);
+    pg_shard_manager.set_superblock(superblock);
     return pg_shard_manager.get_local_map(superblock.current_epoch);
   }).then([this](OSDMapService::local_cached_map_t&& map) {
     osdmap = make_local_shared_foreign(OSDMapService::local_cached_map_t(map));
@@ -442,11 +445,8 @@ seastar::future<> OSD::start()
         replace_unknown_addrs(cluster_msgr->get_myaddrs(),
                               public_msgr->get_myaddrs()); changed) {
       logger().debug("replacing unkwnown addrs of cluster messenger");
-      return cluster_msgr->set_myaddrs(addrs);
-    } else {
-      return seastar::now();
+      cluster_msgr->set_myaddrs(addrs);
     }
-  }).then([this] {
     return heartbeat->start(pick_addresses(CEPH_PICK_ADDRESS_PUBLIC),
                             pick_addresses(CEPH_PICK_ADDRESS_CLUSTER));
   }).then([this] {
@@ -531,6 +531,10 @@ seastar::future<> OSD::_send_boot()
                                   cluster_addrs,
                                   CEPH_FEATURES_ALL);
   collect_sys_info(&m->metadata, NULL);
+
+  // See OSDMonitor::preprocess_boot, prevents boot without allow_crimson
+  // OSDMap flag
+  m->metadata["osd_type"] = "crimson";
   return monc->send_message(std::move(m));
 }
 
@@ -615,6 +619,8 @@ seastar::future<> OSD::start_asok_admin()
     asok->register_command(
       make_asok_hook<DumpSlowestHistoricOpsHook>(
 	std::as_const(get_shard_services().get_registry())));
+    asok->register_command(
+      make_asok_hook<DumpRecoveryReservationsHook>(get_shard_services()));
   });
 }
 
@@ -665,6 +671,8 @@ void OSD::dump_status(Formatter* f) const
   f->dump_unsigned("whoami", superblock.whoami);
   f->dump_string("state", pg_shard_manager.get_osd_state_string());
   f->dump_unsigned("oldest_map", superblock.oldest_map);
+  f->dump_unsigned("cluster_osdmap_trim_lower_bound",
+                   superblock.cluster_osdmap_trim_lower_bound);
   f->dump_unsigned("newest_map", superblock.newest_map);
   f->dump_unsigned("num_pgs", pg_shard_manager.get_num_pgs());
 }
@@ -673,8 +681,10 @@ void OSD::print(std::ostream& out) const
 {
   out << "{osd." << superblock.whoami << " "
       << superblock.osd_fsid << " [" << superblock.oldest_map
-      << "," << superblock.newest_map << "] " << pg_shard_manager.get_num_pgs()
-      << " pgs}";
+      << "," << superblock.newest_map << "] "
+      << "tlb:" << superblock.cluster_osdmap_trim_lower_bound
+      << " pgs:" << pg_shard_manager.get_num_pgs()
+      << "}";
 }
 
 std::optional<seastar::future<>>
@@ -853,7 +863,8 @@ seastar::future<> OSD::handle_osd_map(crimson::net::ConnectionRef conn,
   const auto first = m->get_first();
   const auto last = m->get_last();
   logger().info("handle_osd_map epochs [{}..{}], i have {}, src has [{}..{}]",
-                first, last, superblock.newest_map, m->oldest_map, m->newest_map);
+                first, last, superblock.newest_map,
+                m->cluster_osdmap_trim_lower_bound, m->newest_map);
   // make sure there is something new, here, before we bother flushing
   // the queues and such
   if (last <= superblock.newest_map) {
@@ -865,15 +876,16 @@ seastar::future<> OSD::handle_osd_map(crimson::net::ConnectionRef conn,
   if (first > start) {
     logger().info("handle_osd_map message skips epochs {}..{}",
                   start, first - 1);
-    if (m->oldest_map <= start) {
+    if (m->cluster_osdmap_trim_lower_bound <= start) {
       return get_shard_services().osdmap_subscribe(start, false);
     }
     // always try to get the full range of maps--as many as we can.  this
     //  1- is good to have
     //  2- is at present the only way to ensure that we get a *full* map as
     //     the first map!
-    if (m->oldest_map < first) {
-      return get_shard_services().osdmap_subscribe(m->oldest_map - 1, true);
+    if (m->cluster_osdmap_trim_lower_bound < first) {
+      return get_shard_services().osdmap_subscribe(
+        m->cluster_osdmap_trim_lower_bound - 1, true);
     }
     skip_maps = true;
     start = first;
@@ -980,7 +992,8 @@ seastar::future<> OSD::committed_osd_maps(version_t first,
       logger().info("osd.{}: now preboot", whoami);
 
       if (m->get_source().is_mon()) {
-        return _preboot(m->oldest_map, m->newest_map);
+        return _preboot(
+          m->cluster_osdmap_trim_lower_bound, m->newest_map);
       } else {
         logger().info("osd.{}: start_boot", whoami);
         return start_boot();
@@ -1164,9 +1177,8 @@ seastar::future<> OSD::restart()
 
 seastar::future<> OSD::shutdown()
 {
-  // TODO
-  superblock.mounted = boot_epoch;
-  superblock.clean_thru = osdmap->get_epoch();
+  logger().info("shutting down per osdmap");
+  abort_source.request_abort();
   return seastar::now();
 }
 
@@ -1225,7 +1237,6 @@ seastar::future<> OSD::handle_peering_op(
 
 seastar::future<> OSD::check_osdmap_features()
 {
-  heartbeat->set_require_authorizer(true);
   return store.write_meta("require_osd_release",
                           stringify((int)osdmap->require_osd_release));
 }

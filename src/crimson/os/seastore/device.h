@@ -14,7 +14,7 @@ namespace crimson::os::seastore {
 
 using magic_t = uint64_t;
 
-struct device_spec_t{
+struct device_spec_t {
   magic_t magic = 0;
   device_type_t dtype = device_type_t::NONE;
   device_id_t id = DEVICE_ID_NULL;
@@ -71,7 +71,7 @@ public:
 
   virtual const seastore_meta_t &get_meta() const = 0;
 
-  virtual seastore_off_t get_block_size() const = 0;
+  virtual extent_len_t get_block_size() const = 0;
 
   virtual std::size_t get_available_size() const = 0;
 
@@ -125,3 +125,7 @@ public:
 
 WRITE_CLASS_DENC_BOUNDED(crimson::os::seastore::device_spec_t)
 WRITE_CLASS_DENC(crimson::os::seastore::device_config_t)
+
+#if FMT_VERSION >= 90000
+template <> struct fmt::formatter<crimson::os::seastore::device_config_t> : fmt::ostream_formatter {};
+#endif

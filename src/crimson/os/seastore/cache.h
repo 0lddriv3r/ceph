@@ -271,8 +271,8 @@ public:
   template <typename T, typename Func, typename OnCache>
   get_extent_ret<T> get_extent(
     paddr_t offset,                ///< [in] starting addr
-    seastore_off_t length,          ///< [in] length
-    const src_ext_t* p_src_ext, ///< [in] cache query metric key
+    extent_len_t length,           ///< [in] length
+    const src_ext_t* p_src_ext,    ///< [in] cache query metric key
     Func &&extent_init_func,       ///< [in] init func for extent
     OnCache &&on_cache
   ) {
@@ -339,7 +339,7 @@ public:
   template <typename T>
   get_extent_ret<T> get_extent(
     paddr_t offset,                ///< [in] starting addr
-    seastore_off_t length,          ///< [in] length
+    extent_len_t length,           ///< [in] length
     const src_ext_t* p_metric_key  ///< [in] cache query metric key
   ) {
     return get_extent<T>(
@@ -414,7 +414,7 @@ public:
   get_extent_iertr::future<TCachedExtentRef<T>> get_extent(
     Transaction &t,
     paddr_t offset,
-    seastore_off_t length,
+    extent_len_t length,
     Func &&extent_init_func) {
     CachedExtentRef ret;
     LOG_PREFIX(Cache::get_extent);
@@ -451,11 +451,11 @@ public:
   get_extent_iertr::future<TCachedExtentRef<T>> get_extent(
     Transaction &t,
     paddr_t offset,
-    seastore_off_t length) {
+    extent_len_t length) {
     return get_extent<T>(t, offset, length, [](T &){});
   }
 
-  seastore_off_t get_block_size() const {
+  extent_len_t get_block_size() const {
     return epm.get_block_size();
   }
 
@@ -490,7 +490,7 @@ private:
     extent_types_t type,
     paddr_t offset,
     laddr_t laddr,
-    seastore_off_t length,
+    extent_len_t length,
     const Transaction::src_t* p_src,
     extent_init_func_t &&extent_init_func,
     extent_init_func_t &&on_cache
@@ -504,7 +504,7 @@ private:
     extent_types_t type,
     paddr_t offset,
     laddr_t laddr,
-    seastore_off_t length,
+    extent_len_t length,
     extent_init_func_t &&extent_init_func
   ) {
     LOG_PREFIX(Cache::get_extent_by_type);
@@ -580,7 +580,7 @@ public:
     extent_types_t type,    ///< [in] type tag
     paddr_t offset,         ///< [in] starting addr
     laddr_t laddr,          ///< [in] logical address if logical
-    seastore_off_t length,   ///< [in] length
+    extent_len_t length,    ///< [in] length
     Func &&extent_init_func ///< [in] extent init func
   ) {
     return _get_extent_by_type(
@@ -596,7 +596,7 @@ public:
     extent_types_t type,
     paddr_t offset,
     laddr_t laddr,
-    seastore_off_t length
+    extent_len_t length
   ) {
     return get_extent_by_type(
       t, type, offset, laddr, length, [](CachedExtent &) {});
@@ -627,13 +627,13 @@ public:
   template <typename T>
   TCachedExtentRef<T> alloc_new_extent(
     Transaction &t,         ///< [in, out] current transaction
-    seastore_off_t length,  ///< [in] length
+    extent_len_t length,    ///< [in] length
     placement_hint_t hint,  ///< [in] user hint
-    reclaim_gen_t gen       ///< [in] reclaim generation
+    rewrite_gen_t gen       ///< [in] rewrite generation
   ) {
     LOG_PREFIX(Cache::alloc_new_extent);
     SUBTRACET(seastore_cache, "allocate {} {}B, hint={}, gen={}",
-              t, T::TYPE, length, hint, reclaim_gen_printer_t{gen});
+              t, T::TYPE, length, hint, rewrite_gen_printer_t{gen});
     auto result = epm.alloc_new_extent(t, T::TYPE, length, hint, gen);
     auto ret = CachedExtent::make_cached_extent_ref<T>(std::move(result.bp));
     ret->init(CachedExtent::extent_state_t::INITIAL_WRITE_PENDING,
@@ -644,7 +644,7 @@ public:
     SUBDEBUGT(seastore_cache,
               "allocated {} {}B extent at {}, hint={}, gen={} -- {}",
               t, T::TYPE, length, result.paddr,
-              hint, reclaim_gen_printer_t{result.gen}, *ret);
+              hint, rewrite_gen_printer_t{result.gen}, *ret);
     return ret;
   }
 
@@ -656,9 +656,9 @@ public:
   CachedExtentRef alloc_new_extent_by_type(
     Transaction &t,        ///< [in, out] current transaction
     extent_types_t type,   ///< [in] type tag
-    seastore_off_t length, ///< [in] length
+    extent_len_t length,   ///< [in] length
     placement_hint_t hint, ///< [in] user hint
-    reclaim_gen_t gen      ///< [in] reclaim generation
+    rewrite_gen_t gen      ///< [in] rewrite generation
     );
 
   /**

@@ -190,7 +190,7 @@ void ReplicatedBackend::check_recovery_sources(const OSDMapRef& osdmap)
 
 bool ReplicatedBackend::can_handle_while_inactive(OpRequestRef op)
 {
-  dout(10) << __func__ << ": " << op << dendl;
+  dout(10) << __func__ << ": " << *op->get_req() << dendl;
   switch (op->get_req()->get_type()) {
   case MSG_OSD_PG_PULL:
     return true;
@@ -203,7 +203,7 @@ bool ReplicatedBackend::_handle_message(
   OpRequestRef op
   )
 {
-  dout(10) << __func__ << ": " << op << dendl;
+  dout(10) << __func__ << ": " << *op->get_req() << dendl;
   switch (op->get_req()->get_type()) {
   case MSG_OSD_PG_PUSH:
     do_push(op);
@@ -653,13 +653,15 @@ int ReplicatedBackend::be_deep_scrub(
       pos.data_hash = bufferhash(-1);
     }
 
+    const uint64_t stride = cct->_conf->osd_deep_scrub_stride;
+
     bufferlist bl;
     r = store->read(
       ch,
       ghobject_t(
 	poid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard),
       pos.data_pos,
-      cct->_conf->osd_deep_scrub_stride, bl,
+      stride, bl,
       fadvise_flags);
     if (r < 0) {
       dout(20) << __func__ << "  " << poid << " got "
@@ -671,7 +673,7 @@ int ReplicatedBackend::be_deep_scrub(
       pos.data_hash << bl;
     }
     pos.data_pos += r;
-    if (static_cast<uint64_t>(r) == cct->_conf->osd_deep_scrub_stride) {
+    if (static_cast<uint64_t>(r) == stride) {
       dout(20) << __func__ << "  " << poid << " more data, digest so far 0x"
 	       << std::hex << pos.data_hash.digest() << std::dec << dendl;
       return -EINPROGRESS;

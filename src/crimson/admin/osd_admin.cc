@@ -178,7 +178,7 @@ public:
     cmd_getval(cmdmap, "logger", logger);
     cmd_getval(cmdmap, "counter", counter);
 
-    crimson::common::local_perf_coll().dump_formatted(f.get(), false, logger, counter);
+    crimson::common::local_perf_coll().dump_formatted(f.get(), false, false, logger, counter);
     return seastar::make_ready_future<tell_result_t>(std::move(f));
   }
 };
@@ -226,22 +226,32 @@ public:
                                       std::string_view format,
                                       ceph::bufferlist&& input) const final
   {
-    std::unique_ptr<Formatter> f{Formatter::create(format, "json-pretty", "json-pretty")};
+    std::unique_ptr<Formatter> fref{Formatter::create(format, "json-pretty", "json-pretty")};
+    auto *f = fref.get();
     std::string prefix;
     cmd_getval(cmdmap, "group", prefix);
     f->open_object_section("metrics");
-    for (const auto& [full_name, metric_family]: seastar::scollectd::get_value_map()) {
-      if (!prefix.empty() && full_name.compare(0, prefix.size(), prefix) != 0) {
-        continue;
-      }
-      for (const auto& [labels, metric] : metric_family) {
-        if (metric && metric->is_enabled()) {
-          dump_metric_value(f.get(), full_name, *metric, labels);
+    f->open_array_section("metrics");
+    return seastar::do_with(std::move(prefix), [f](auto &prefix) {
+      return crimson::reactor_map_seq([f, &prefix] {
+        for (const auto& [full_name, metric_family]: seastar::scollectd::get_value_map()) {
+          if (!prefix.empty() && full_name.compare(0, prefix.size(), prefix) != 0) {
+            continue;
+          }
+          for (const auto& [labels, metric] : metric_family) {
+            if (metric && metric->is_enabled()) {
+	      f->open_object_section(""); // enclosed by array
+              DumpMetricsHook::dump_metric_value(f, full_name, *metric, labels);
+	      f->close_section();
+            }
+          }
         }
-      }
-    }
-    f->close_section();
-    return seastar::make_ready_future<tell_result_t>(std::move(f));
+      });
+    }).then([fref = std::move(fref)]() mutable {
+      fref->close_section();
+      fref->close_section();
+      return seastar::make_ready_future<tell_result_t>(std::move(fref));
+    });
   }
 private:
   using registered_metric = seastar::metrics::impl::registered_metric;
@@ -528,5 +538,37 @@ private:
 };
 template std::unique_ptr<AdminSocketHook>
 make_asok_hook<DumpSlowestHistoricOpsHook>(const crimson::osd::OSDOperationRegistry& op_registry);
+
+class DumpRecoveryReservationsHook : public AdminSocketHook {
+public:
+  explicit DumpRecoveryReservationsHook(crimson::osd::ShardServices& shard_services) :
+    AdminSocketHook{"dump_recovery_reservations", "", "show recovery reservations"},
+    shard_services(shard_services)
+  {}
+  seastar::future<tell_result_t> call(const cmdmap_t&,
+				      std::string_view format,
+				      ceph::bufferlist&& input) const final
+  {
+    logger().debug("{}", __func__);
+    unique_ptr<Formatter> f{Formatter::create(format, "json-pretty", "json-pretty")};
+    return seastar::do_with(std::move(f), [this](auto&& f) {
+      f->open_object_section("reservations");
+      f->open_object_section("local_reservations");
+      return shard_services.local_dump_reservations(f.get()).then([&f, this] {
+        f->close_section();
+        f->open_object_section("remote_reservations");
+        return shard_services.remote_dump_reservations(f.get()).then([&f] {
+          f->close_section();
+          f->close_section();
+          return seastar::make_ready_future<tell_result_t>(std::move(f));
+        });
+      });
+    });
+  }
+private:
+  crimson::osd::ShardServices& shard_services;
+};
+template std::unique_ptr<AdminSocketHook>
+make_asok_hook<DumpRecoveryReservationsHook>(crimson::osd::ShardServices& shard_services);
 
 } // namespace crimson::admin
