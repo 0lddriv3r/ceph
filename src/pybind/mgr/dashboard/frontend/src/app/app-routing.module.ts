@@ -24,8 +24,7 @@ import { SilenceListComponent } from './ceph/cluster/prometheus/silence-list/sil
 import { ServiceFormComponent } from './ceph/cluster/services/service-form/service-form.component';
 import { ServicesComponent } from './ceph/cluster/services/services.component';
 import { TelemetryComponent } from './ceph/cluster/telemetry/telemetry.component';
-import { DeprecatedDashboardComponent } from './ceph/dashboard/dashboard/dashboard.component';
-import { DashboardComponent } from './ceph/new-dashboard/dashboard/dashboard.component';
+import { DashboardComponent } from './ceph/dashboard/dashboard/dashboard.component';
 import { NfsFormComponent } from './ceph/nfs/nfs-form/nfs-form.component';
 import { NfsListComponent } from './ceph/nfs/nfs-list/nfs-list.component';
 import { PerformanceCounterComponent } from './ceph/performance-counter/performance-counter/performance-counter.component';
@@ -38,7 +37,7 @@ import { LoginLayoutComponent } from './core/layouts/login-layout/login-layout.c
 import { WorkbenchLayoutComponent } from './core/layouts/workbench-layout/workbench-layout.component';
 import { ApiDocsComponent } from './core/navigation/api-docs/api-docs.component';
 import { ActionLabels, URLVerbs } from './shared/constants/app.constants';
-import { CrudFormComponent } from './shared/datatable/crud-table/crud-form/crud-form.component';
+import { CrudFormComponent } from './shared/forms/crud-form/crud-form.component';
 import { CRUDTableComponent } from './shared/datatable/crud-table/crud-table.component';
 import { BreadcrumbsResolver, IBreadcrumb } from './shared/models/breadcrumbs';
 import { AuthGuardService } from './shared/services/auth-guard.service';
@@ -89,8 +88,7 @@ const routes: Routes = [
     canActivate: [AuthGuardService, ChangePasswordGuardService],
     canActivateChild: [AuthGuardService, ChangePasswordGuardService],
     children: [
-      { path: 'dashboard', component: DeprecatedDashboardComponent },
-      { path: 'dashboard_3', component: DashboardComponent },
+      { path: 'dashboard', component: DashboardComponent },
       { path: 'error', component: ErrorComponent },
 
       // Cluster
@@ -315,7 +313,7 @@ const routes: Routes = [
       // Object Gateway
       {
         path: 'rgw',
-        canActivateChild: [FeatureTogglesGuardService, ModuleStatusGuardService],
+        canActivate: [FeatureTogglesGuardService, ModuleStatusGuardService],
         data: {
           moduleStatusGuardConfig: {
             uiApiPath: 'rgw',

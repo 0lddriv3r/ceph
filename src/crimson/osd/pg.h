@@ -16,6 +16,7 @@
 #include "messages/MOSDOpReply.h"
 #include "os/Transaction.h"
 #include "osd/osd_types.h"
+#include "osd/osd_types_fmt.h"
 #include "crimson/osd/object_context.h"
 #include "osd/PeeringState.h"
 #include "osd/SnapMapper.h"
@@ -157,18 +158,6 @@ public:
     bool dirty_big_info,
     bool need_write_epoch,
     ceph::os::Transaction &t) final;
-
-  void on_info_history_change() final {
-    // Not needed yet -- mainly for scrub scheduling
-  }
-
-  /// Notify PG that Primary/Replica status has changed (to update scrub registration)
-  void on_primary_status_change(bool was_primary, bool now_primary) final {
-  }
-
-  /// Need to reschedule next scrub. Assuming no change in role
-  void reschedule_scrub() final {
-  }
 
   void scrub_requested(scrub_level_t scrub_level, scrub_type_t scrub_type) final;
 
@@ -492,7 +481,7 @@ public:
     const PastIntervals& pim,
     ceph::os::Transaction &t);
 
-  seastar::future<> read_state(crimson::os::FuturizedStore* store);
+  seastar::future<> read_state(crimson::os::FuturizedStore::Shard* store);
 
   interruptible_future<> do_peering_event(
     PGPeeringEvent& evt, PeeringCtx &rctx);
@@ -524,8 +513,20 @@ public:
     with_obc_func_t&& f);
 
   interruptible_future<> handle_rep_op(Ref<MOSDRepOp> m);
+  void log_operation(
+    std::vector<pg_log_entry_t>&& logv,
+    const eversion_t &trim_to,
+    const eversion_t &roll_forward_to,
+    const eversion_t &min_last_complete_ondisk,
+    bool transaction_applied,
+    ObjectStore::Transaction &txn,
+    bool async = false);
+  void replica_clear_repop_obc(
+    const std::vector<pg_log_entry_t> &logv);
   void handle_rep_op_reply(const MOSDRepOpReply& m);
-  interruptible_future<> do_update_log_missing(Ref<MOSDPGUpdateLogMissing> m);
+  interruptible_future<> do_update_log_missing(
+    Ref<MOSDPGUpdateLogMissing> m,
+    crimson::net::ConnectionRef conn);
   interruptible_future<> do_update_log_missing_reply(
                          Ref<MOSDPGUpdateLogMissingReply> m);
 
@@ -553,8 +554,10 @@ private:
                do_osd_ops_iertr::future<Ret>>;
   do_osd_ops_iertr::future<pg_rep_op_fut_t<MURef<MOSDOpReply>>> do_osd_ops(
     Ref<MOSDOp> m,
+    crimson::net::ConnectionRef conn,
     ObjectContextRef obc,
-    const OpInfo &op_info);
+    const OpInfo &op_info,
+    const SnapContext& snapc);
   using do_osd_ops_success_func_t =
     std::function<do_osd_ops_iertr::future<>()>;
   using do_osd_ops_failure_func_t =
@@ -733,6 +736,7 @@ private:
 
   bool can_discard_replica_op(const Message& m, epoch_t m_map_epoch) const;
   bool can_discard_op(const MOSDOp& m) const;
+  void context_registry_on_change();
   bool is_missing_object(const hobject_t& soid) const {
     return peering_state.get_pg_log().get_missing().get_items().count(soid);
   }
@@ -760,7 +764,7 @@ private:
 };
 
 struct PG::do_osd_ops_params_t {
-  crimson::net::ConnectionFRef &get_connection() const {
+  crimson::net::ConnectionRef &get_connection() const {
     return conn;
   }
   osd_reqid_t get_reqid() const {
@@ -781,8 +785,9 @@ struct PG::do_osd_ops_params_t {
   // Only used by InternalClientRequest, no op flags
   bool has_flag(uint32_t flag) const {
     return false;
- }
-  crimson::net::ConnectionFRef &conn;
+  }
+
+  crimson::net::ConnectionRef &conn;
   osd_reqid_t reqid;
   utime_t mtime;
   epoch_t map_epoch;

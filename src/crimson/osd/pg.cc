@@ -591,7 +591,7 @@ void PG::init(
     new_acting_primary, history, pi, t);
 }
 
-seastar::future<> PG::read_state(crimson::os::FuturizedStore* store)
+seastar::future<> PG::read_state(crimson::os::FuturizedStore::Shard* store)
 {
   if (__builtin_expect(stopping, false)) {
     return seastar::make_exception_future<>(
@@ -951,32 +951,17 @@ seastar::future<> PG::submit_error_log(
 PG::do_osd_ops_iertr::future<PG::pg_rep_op_fut_t<MURef<MOSDOpReply>>>
 PG::do_osd_ops(
   Ref<MOSDOp> m,
+  crimson::net::ConnectionRef conn,
   ObjectContextRef obc,
-  const OpInfo &op_info)
+  const OpInfo &op_info,
+  const SnapContext& snapc)
 {
   if (__builtin_expect(stopping, false)) {
     throw crimson::common::system_shutdown_exception();
   }
-  SnapContext snapc;
-  if (op_info.may_write() || op_info.may_cache()) {
-    // snap
-    if (get_pgpool().info.is_pool_snaps_mode()) {
-      // use pool's snapc
-      snapc = get_pgpool().snapc;
-      logger().debug("{} using pool's snapc snaps={}",
-                     __func__, snapc.snaps);
-
-    } else {
-      // client specified snapc
-      snapc.seq = m->get_snap_seq();
-      snapc.snaps = m->get_snaps();
-      logger().debug("{} client specified snapc seq={} snaps={}",
-                     __func__, snapc.seq, snapc.snaps);
-    }
-  }
   return do_osd_ops_execute<MURef<MOSDOpReply>>(
     seastar::make_lw_shared<OpsExecuter>(
-      Ref<PG>{this}, obc, op_info, *m, snapc),
+      Ref<PG>{this}, obc, op_info, *m, conn, snapc),
     m->ops,
     [this, m, obc, may_write = op_info.may_write(),
      may_read = op_info.may_read(), rvec = op_info.allows_returnvec()] {
@@ -1098,7 +1083,13 @@ PG::do_osd_ops(
     [=, this, &ops, &op_info](auto &msg_params) {
     return do_osd_ops_execute<void>(
       seastar::make_lw_shared<OpsExecuter>(
-        Ref<PG>{this}, std::move(obc), op_info, msg_params, SnapContext{}),
+        Ref<PG>{this},
+        std::move(obc),
+        op_info,
+        msg_params,
+        msg_params.get_connection(),
+        SnapContext{}
+      ),
       ops,
       std::move(success_func),
       std::move(failure_func));
@@ -1199,6 +1190,7 @@ PG::interruptible_future<> PG::handle_rep_op(Ref<MOSDRepOp> req)
 	crimson::common::system_shutdown_exception());
   }
 
+  logger().debug("{}: {}", __func__, *req);
   if (can_discard_replica_op(*req)) {
     return seastar::now();
   }
@@ -1209,8 +1201,13 @@ PG::interruptible_future<> PG::handle_rep_op(Ref<MOSDRepOp> req)
   auto p = req->logbl.cbegin();
   std::vector<pg_log_entry_t> log_entries;
   decode(log_entries, p);
-  peering_state.append_log(std::move(log_entries), req->pg_trim_to,
-      req->version, req->min_last_complete_ondisk, txn, !txn.empty(), false);
+  log_operation(std::move(log_entries),
+                req->pg_trim_to,
+                req->version,
+                req->min_last_complete_ondisk,
+                !txn.empty(),
+                txn,
+                false);
   logger().debug("PG::handle_rep_op: do_transaction...");
   return interruptor::make_interruptible(shard_services.get_store().do_transaction(
 	coll_ref, std::move(txn))).then_interruptible(
@@ -1225,6 +1222,62 @@ PG::interruptible_future<> PG::handle_rep_op(Ref<MOSDRepOp> req)
     });
 }
 
+void PG::log_operation(
+  std::vector<pg_log_entry_t>&& logv,
+  const eversion_t &trim_to,
+  const eversion_t &roll_forward_to,
+  const eversion_t &min_last_complete_ondisk,
+  bool transaction_applied,
+  ObjectStore::Transaction &txn,
+  bool async) {
+  logger().debug("{}", __func__);
+  if (is_primary()) {
+    ceph_assert(trim_to <= peering_state.get_last_update_ondisk());
+  }
+  /* TODO: when we add snap mapper and projected log support,
+   * we'll likely want to update them here.
+   *
+   * See src/osd/PrimaryLogPG.h:log_operation for how classic
+   * handles these cases.
+   */
+#if 0
+  if (transaction_applied) {
+    //TODO:
+    //update_snap_map(logv, t);
+  }
+  auto last = logv.rbegin();
+  if (is_primary() && last != logv.rend()) {
+    projected_log.skip_can_rollback_to_to_head();
+    projected_log.trim(cct, last->version, nullptr, nullptr, nullptr);
+  }
+#endif
+  if (!is_primary()) { // && !is_ec_pg()
+    replica_clear_repop_obc(logv);
+  }
+  peering_state.append_log(std::move(logv),
+                           trim_to,
+                           roll_forward_to,
+                           min_last_complete_ondisk,
+                           txn,
+                           !txn.empty(),
+                           false);
+}
+
+void PG::replica_clear_repop_obc(
+  const std::vector<pg_log_entry_t> &logv) {
+    logger().debug("{} clearing {} entries", __func__, logv.size());
+    for (auto &&e: logv) {
+      logger().debug(" {} get_object_boundary(from): {} "
+                     " head version(to): {}",
+                     e.soid,
+                     e.soid.get_object_boundary(),
+                     e.soid.get_head());
+    /* Have to blast all clones, they share a snapset */
+    obc_registry.clear_range(
+      e.soid.get_object_boundary(), e.soid.get_head());
+  }
+}
+
 void PG::handle_rep_op_reply(const MOSDRepOpReply& m)
 {
   if (!can_discard_replica_op(m)) {
@@ -1233,7 +1286,8 @@ void PG::handle_rep_op_reply(const MOSDRepOpReply& m)
 }
 
 PG::interruptible_future<> PG::do_update_log_missing(
-  Ref<MOSDPGUpdateLogMissing> m)
+  Ref<MOSDPGUpdateLogMissing> m,
+  crimson::net::ConnectionRef conn)
 {
   if (__builtin_expect(stopping, false)) {
     return seastar::make_exception_future<>(
@@ -1255,7 +1309,7 @@ PG::interruptible_future<> PG::do_update_log_missing(
 
   return interruptor::make_interruptible(shard_services.get_store().do_transaction(
     coll_ref, std::move(t))).then_interruptible(
-    [m, lcod=peering_state.get_info().last_complete, this] {
+    [m, conn, lcod=peering_state.get_info().last_complete, this] {
     if (!peering_state.pg_has_reset_since(m->get_epoch())) {
       peering_state.update_last_complete_ondisk(lcod);
       auto reply =
@@ -1267,7 +1321,7 @@ PG::interruptible_future<> PG::do_update_log_missing(
           m->get_tid(),
           lcod);
       reply->set_priority(CEPH_MSG_PRIO_HIGH);
-      return m->get_connection()->send(std::move(reply));
+      return conn->send(std::move(reply));
     }
     return seastar::now();
   });
@@ -1364,6 +1418,7 @@ seastar::future<> PG::stop()
 
 void PG::on_change(ceph::os::Transaction &t) {
   logger().debug("{} {}:", *this, __func__);
+  context_registry_on_change();
   obc_loader.notify_on_change(is_primary());
   recovery_backend->on_peering_interval_change(t);
   backend->on_actingset_changed(is_primary());
@@ -1377,7 +1432,38 @@ void PG::on_change(ceph::os::Transaction &t) {
   }
 }
 
+void PG::context_registry_on_change() {
+    obc_registry.for_each([](ObjectContextRef obc) {
+      assert(obc);
+      for (auto j = obc->watchers.begin();
+           j != obc->watchers.end();
+           j = obc->watchers.erase(j)) {
+        j->second->discard_state();
+      }
+  });
+}
+
 bool PG::can_discard_op(const MOSDOp& m) const {
+  if (m.get_map_epoch() <
+      peering_state.get_info().history.same_primary_since) {
+    logger().debug("{} changed after {} dropping {} ",
+                   __func__ , m.get_map_epoch(), m);
+    return true;
+  }
+
+  if ((m.get_flags() & (CEPH_OSD_FLAG_BALANCE_READS |
+                        CEPH_OSD_FLAG_LOCALIZE_READS))
+    && !is_primary()
+    && (m.get_map_epoch() <
+        peering_state.get_info().history.same_interval_since))
+    {
+      // Note: the Objecter will resend on interval change without the primary
+      // changing if it actually sent to a replica.  If the primary hasn't
+      // changed since the send epoch, we got it, and we're primary, it won't
+      // have resent even if the interval did change as it sent it to the primary
+      // (us).
+      return true;
+    }
   return __builtin_expect(m.get_map_epoch()
       < peering_state.get_info().history.same_primary_since, false);
 }

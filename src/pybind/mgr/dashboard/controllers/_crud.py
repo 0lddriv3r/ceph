@@ -64,7 +64,8 @@ class TableAction(NamedTuple):
     name: str
     permission: str
     icon: str
-    routerLink: str  # redirect to...
+    routerLink: str = ''  # redirect to...
+    click: str = ''
 
 
 class TableComponent(SerializableClass):
@@ -76,6 +77,13 @@ class TableComponent(SerializableClass):
 
 class Icon(Enum):
     add = 'fa fa-plus'
+    destroy = 'fa fa-times'
+
+
+class Validator(Enum):
+    JSON = 'json'
+    RGW_ROLE_NAME = 'rgwRoleName'
+    RGW_ROLE_PATH = 'rgwRolePath'
 
 
 class FormField(NamedTuple):
@@ -89,18 +97,19 @@ class FormField(NamedTuple):
     field_type: Any = str
     default_value: Optional[Any] = None
     optional: bool = False
-    html_class: str = ''
-    label_html_class: str = 'col-form-label'
-    field_html_class: str = 'col-form-input'
+    help: str = ''
+    validators: List[Validator] = []
 
     def get_type(self):
         _type = ''
         if self.field_type == str:
             _type = 'string'
         elif self.field_type == int:
-            _type = 'integer'
+            _type = 'int'
         elif self.field_type == bool:
             _type = 'boolean'
+        elif self.field_type == 'textarea':
+            _type = 'textarea'
         else:
             raise NotImplementedError(f'Unimplemented type {self.field_type}')
         return _type
@@ -108,15 +117,12 @@ class FormField(NamedTuple):
 
 class Container:
     def __init__(self, name: str, key: str, fields: List[Union[FormField, "Container"]],
-                 optional: bool = False, html_class: str = '', label_html_class: str = '',
-                 field_html_class: str = ''):
+                 optional: bool = False, min_items=1):
         self.name = name
         self.key = key
         self.fields = fields
         self.optional = optional
-        self.html_class = html_class
-        self.label_html_class = label_html_class
-        self.field_html_class = field_html_class
+        self.min_items = min_items
 
     def layout_type(self):
         raise NotImplementedError
@@ -135,39 +141,36 @@ class Container:
         properties = None  # control schema properties alias
         required = None
         if self._property_type() == 'array':
+            control_schema['required'] = []
+            control_schema['minItems'] = self.min_items
             control_schema['items'] = {
                 'type': 'object',
                 'properties': {},
                 'required': []
             }
             properties = control_schema['items']['properties']
-            required = control_schema['items']['required']
+            required = control_schema['required']
+            control_schema['items']['required'] = required
+
             ui_schemas.append({
-                'type': 'array',
                 'key': key,
-                'htmlClass': self.html_class,
-                'fieldHtmlClass': self.field_html_class,
-                'labelHtmlClass': self.label_html_class,
-                'items': [{
-                        'type': 'div',
-                        'flex-direction': self.layout_type(),
-                        'displayFlex': True,
-                        'items': []
-                }]
+                'templateOptions': {
+                    'objectTemplateOptions': {
+                        'layoutType': self.layout_type()
+                    }
+                },
+                'items': []
             })
-            items = ui_schemas[-1]['items'][0]['items']
+            items = ui_schemas[-1]['items']
         else:
             control_schema['properties'] = {}
             control_schema['required'] = []
             required = control_schema['required']
             properties = control_schema['properties']
             ui_schemas.append({
-                'type': 'section',
-                'flex-direction': self.layout_type(),
-                'displayFlex': True,
-                'htmlClass': self.html_class,
-                'fieldHtmlClass': self.field_html_class,
-                'labelHtmlClass': self.label_html_class,
+                'templateOptions': {
+                    'layoutType': self.layout_type()
+                },
                 'key': key,
                 'items': []
             })
@@ -182,7 +185,7 @@ class Container:
 
         # include fields in this container's schema
         for field in self.fields:
-            field_ui_schema = {}
+            field_ui_schema: Dict[str, Any] = {}
             properties[field.key] = {}
             field_key = field.key
             if key:
@@ -196,13 +199,12 @@ class Container:
                 properties[field.key]['type'] = _type
                 properties[field.key]['title'] = field.name
                 field_ui_schema['key'] = field_key
-                field_ui_schema['htmlClass'] = field.html_class
-                field_ui_schema['fieldHtmlClass'] = field.field_html_class
-                field_ui_schema['labelHtmlClass'] = field.label_html_class
+                field_ui_schema['help'] = f'{field.help}'
+                field_ui_schema['validators'] = [i.value for i in field.validators]
                 items.append(field_ui_schema)
             elif isinstance(field, Container):
                 container_schema = field.to_dict(key+'.'+field.key if key else field.key)
-                control_schema['properties'][field.key] = container_schema['control_schema']
+                properties[field.key] = container_schema['control_schema']
                 ui_schemas.extend(container_schema['ui_schema'])
             if not field.optional:
                 required.append(field.key)
@@ -244,45 +246,26 @@ class ArrayHorizontalContainer(Container):
         return 'array'
 
 
-class Form:
-    def __init__(self, path, root_container, action: str = '',
-                 footer_html_class: str = 'card-footer position-absolute pb-0 mt-3',
-                 submit_style: str = 'btn btn-primary', cancel_style: str = ''):
-        self.path = path
-        self.action = action
-        self.root_container = root_container
-        self.footer_html_class = footer_html_class
-        self.submit_style = submit_style
-        self.cancel_style = cancel_style
+class FormTaskInfo:
+    def __init__(self, message: str, metadata_fields: List[str]) -> None:
+        self.message = message
+        self.metadata_fields = metadata_fields
 
     def to_dict(self):
-        container_schema = self.root_container.to_dict()
+        return {'message': self.message, 'metadataFields': self.metadata_fields}
 
-        # root container style
-        container_schema['ui_schema'].append({
-            'type': 'flex',
-            'flex-flow': f'{self.root_container.layout_type()} wrap',
-            'displayFlex': True,
-        })
 
-        footer = {
-            "type": "flex",
-            "htmlClass": self.footer_html_class,
-            "items": [
-                {
-                    'type': 'flex',
-                    'flex-direction': 'row',
-                    'displayFlex': True,
-                    'htmlClass': 'd-flex justify-content-end mb-0',
-                    'items': [
-                        {"type": "cancel", "style": self.cancel_style, 'htmlClass': 'me-2'},
-                        {"type": "submit", "style": self.submit_style, "title": self.action},
-                    ]
-                }
-            ]
-        }
-        container_schema['ui_schema'].append(footer)
-        return container_schema
+class Form:
+    def __init__(self, path, root_container,
+                 task_info: FormTaskInfo = FormTaskInfo("Unknown task", [])):
+        self.path = path
+        self.root_container: Container = root_container
+        self.task_info = task_info
+
+    def to_dict(self):
+        res = self.root_container.to_dict()
+        res['task_info'] = self.task_info.to_dict()
+        return res
 
 
 class CRUDMeta(SerializableClass):
@@ -291,6 +274,8 @@ class CRUDMeta(SerializableClass):
         self.permissions = []
         self.actions = []
         self.forms = []
+        self.columnKey = ''
+        self.detail_columns = []
 
 
 class CRUDCollectionMethod(NamedTuple):
@@ -303,37 +288,33 @@ class CRUDResourceMethod(NamedTuple):
     doc: EndpointDoc
 
 
+# pylint: disable=R0902
 class CRUDEndpoint:
     # for testing purposes
     CRUDClass: Optional[RESTController] = None
     CRUDClassMetadata: Optional[RESTController] = None
 
-    # pylint: disable=R0902
     def __init__(self, router: APIRouter, doc: APIDoc,
                  set_column: Optional[Dict[str, Dict[str, str]]] = None,
                  actions: Optional[List[TableAction]] = None,
                  permissions: Optional[List[str]] = None, forms: Optional[List[Form]] = None,
+                 column_key: Optional[str] = None,
                  meta: CRUDMeta = CRUDMeta(), get_all: Optional[CRUDCollectionMethod] = None,
-                 create: Optional[CRUDCollectionMethod] = None):
+                 create: Optional[CRUDCollectionMethod] = None,
+                 delete: Optional[CRUDCollectionMethod] = None,
+                 detail_columns: Optional[List[str]] = None):
         self.router = router
         self.doc = doc
         self.set_column = set_column
-        if actions:
-            self.actions = actions
-        else:
-            self.actions = []
-
-        if forms:
-            self.forms = forms
-        else:
-            self.forms = []
+        self.actions = actions if actions is not None else []
+        self.forms = forms if forms is not None else []
         self.meta = meta
         self.get_all = get_all
         self.create = create
-        if permissions:
-            self.permissions = permissions
-        else:
-            self.permissions = []
+        self.delete = delete
+        self.permissions = permissions if permissions is not None else []
+        self.column_key = column_key if column_key is not None else ''
+        self.detail_columns = detail_columns if detail_columns is not None else []
 
     def __call__(self, cls: Any):
         self.create_crud_class(cls)
@@ -364,6 +345,12 @@ class CRUDEndpoint:
                 def create(self, *args, **kwargs):
                     return outer_self.create.func(self, *args, **kwargs)  # type: ignore
 
+            if self.delete:
+                @self.delete.doc
+                @wraps(self.delete.func)
+                def delete(self, *args, **kwargs):
+                    return outer_self.delete.func(self, *args, **kwargs)  # type: ignore
+
         cls.CRUDClass = CRUDClass
 
     def create_meta_class(self, cls):
@@ -372,7 +359,13 @@ class CRUDEndpoint:
             self.generate_actions()
             self.generate_forms()
             self.set_permissions()
+            self.set_column_key()
+            self.get_detail_columns()
             return serialize(self.__class__.outer_self.meta)
+
+        def get_detail_columns(self):
+            columns = self.__class__.outer_self.detail_columns
+            self.__class__.outer_self.meta.detail_columns = columns
 
         def update_columns(self):
             if self.__class__.outer_self.set_column:
@@ -406,6 +399,11 @@ class CRUDEndpoint:
         def set_permissions(self):
             if self.__class__.outer_self.permissions:
                 self.outer_self.meta.permissions.extend(self.__class__.outer_self.permissions)
+
+        def set_column_key(self):
+            if self.__class__.outer_self.column_key:
+                self.outer_self.meta.columnKey = self.__class__.outer_self.column_key
+
         class_name = self.router.path.replace('/', '')
         meta_class = type(f'{class_name}_CRUDClassMetadata',
                           (RESTController,),
@@ -415,6 +413,8 @@ class CRUDEndpoint:
                               'generate_actions': generate_actions,
                               'generate_forms': generate_forms,
                               'set_permissions': set_permissions,
+                              'set_column_key': set_column_key,
+                              'get_detail_columns': get_detail_columns,
                               'outer_self': self,
                           })
         UIRouter(self.router.path, self.router.security_scope)(meta_class)

@@ -61,21 +61,24 @@ Diagram - Replication of Object Data Between Zones
 The replication of object data between zones within a zonegroup looks
 something like this:
 
-.. image:: ../images/zone-sync2.png
+.. image:: ../images/zone-sync.svg
    :align: center
 
 At the top of this diagram, we see two applications (also known as "clients").
 The application on the right is both writing and reading data from the Ceph
-Cluster, by means of the RADOS Gateway (RGW).
+Cluster, by means of the RADOS Gateway (RGW). The application on the left is
+only *reading* data from the Ceph Cluster, by means of an instance of RADOS
+Gateway (RGW). In both cases (read-and-write and read-only), the transmssion of
+data is handled RESTfully.
 
 In the middle of this diagram, we see two zones, each of which contains an
-instance of a RADOS Gateway (RGW). These instances of RGW are handling the
+instance of RADOS Gateway (RGW). These instances of RGW are handling the
 movement of data from the applications to the zonegroup. The arrow from the
 master zone (US-EAST) to the secondary zone (US-WEST) represents an act of data
 synchronization.
 
-At the bottom of this diagram, we see the master zonegroup that contains the
-master zone and the secondary zone.
+At the bottom of this diagram, we see the data distributed into the Ceph
+Storage Cluster.
 
 For additional details on setting up a cluster, see `Ceph Object Gateway for
 Production <https://access.redhat.com/documentation/en-us/red_hat_ceph_storage/3/html/ceph_object_gateway_for_production/index/>`__.
@@ -156,7 +159,11 @@ realm enforces a globally unique namespace within itself.
 
       radosgw-admin realm create --rgw-realm=movies --default
 
-   .. note:: If you intend the cluster to have a single realm, specify the ``--default`` flag.  If ``--default`` is specified, ``radosgw-admin`` uses this realm by default. If ``--default`` is not specified, you must specify either the ``--rgw-realm`` flag or the ``--realm-id`` flag to identify the realm when adding zonegroups and zones.
+   .. note:: If you intend the cluster to have a single realm, specify the ``--default`` flag.  
+
+      If ``--default`` is specified, ``radosgw-admin`` uses this realm by default. 
+      
+      If ``--default`` is not specified, you must specify either the ``--rgw-realm`` flag or the ``--realm-id`` flag to identify the realm when adding zonegroups and zones.
 
 #. After the realm has been created, ``radosgw-admin`` echoes back the realm
    configuration. For example:
@@ -192,7 +199,11 @@ for the realm.
 
       radosgw-admin zonegroup create --rgw-zonegroup=us --endpoints=http://rgw1:80 --rgw-realm=movies --master --default
 
-   .. note:: If the realm will have only a single zonegroup, specify the ``--default`` flag. If ``--default`` is specified, ``radosgw-admin`` uses this zonegroup by default when adding new zones. If ``--default`` is not specified, you must use either the ``--rgw-zonegroup`` flag or the ``--zonegroup-id`` flag to identify the zonegroup when adding or modifying zones.
+   .. note:: If the realm will have only a single zonegroup, specify the ``--default`` flag. 
+
+      If ``--default`` is specified, ``radosgw-admin`` uses this zonegroup by default when adding new zones. 
+      
+      If ``--default`` is not specified, you must use either the ``--rgw-zonegroup`` flag or the ``--zonegroup-id`` flag to identify the zonegroup when adding or modifying zones.
 
 #. After creating the master zonegroup, ``radosgw-admin`` echoes back the
    zonegroup configuration. For example:
