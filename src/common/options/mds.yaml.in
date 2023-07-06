@@ -1085,6 +1085,26 @@ options:
   default: false
   services:
   - mds
+- name: mds_kill_skip_replaying_inotable
+  type: bool
+  level: dev
+  default: false
+  services:
+  - mds
+  fmt_desc: Ceph will skip replaying the inotable when replaying the journal, and
+    the premary MDS will crash, while the replacing MDS won't.
+    (for testing only).
+  with_legacy: true
+- name: mds_inject_skip_replaying_inotable
+  type: bool
+  level: dev
+  default: false
+  services:
+  - mds
+  fmt_desc: Ceph will skip replaying the inotable when replaying the journal, and
+    the premary MDS will crash, while the replacing MDS won't.
+    (for testing only).
+  with_legacy: true
 #  percentage of MDS modify replies to skip sending the client a trace on [0-1]
 - name: mds_inject_traceless_reply_probability
   type: float
@@ -1491,6 +1511,18 @@ options:
   default: 0
   min: 0
   max: 60
+  services:
+  - mds
+  flags:
+  - runtime
+- name: defer_client_eviction_on_laggy_osds
+  type: bool
+  level: advanced
+  desc: Do not evict client if any osd is laggy
+  long_desc: Laggy OSD(s) can make clients laggy or unresponsive, this can
+    lead to their eviction, this option once enabled can help defer client
+    eviction.
+  default: true
   services:
   - mds
   flags:

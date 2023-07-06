@@ -270,6 +270,14 @@ CMAKE_DEPENDENT_OPTION(WITH_RBD_SSD_CACHE "Enable librbd persistent write back c
 CMAKE_DEPENDENT_OPTION(WITH_SYSTEM_PMDK "Require and build with system PMDK" OFF
   "WITH_RBD_RWL OR WITH_BLUESTORE_PMEM" OFF)
 
+CMAKE_DEPENDENT_OPTION(WITH_RBD_UBBD "Enable ubbd support for rbd device utility" OFF
+    "WITH_RBD" OFF)
+
+if(WITH_RBD_UBBD)
+  include(BuildUBBD)
+  build_ubbd()
+endif()
+
 if(WITH_BLUESTORE_PMEM)
   set(HAVE_BLUESTORE_PMEM ON)
 endif()
@@ -391,6 +399,7 @@ if(NOT ALLOCATOR STREQUAL "libc")
     $<$<COMPILE_LANGUAGE:CXX>:-fno-builtin-realloc>
     $<$<COMPILE_LANGUAGE:CXX>:-fno-builtin-free>)
 endif()
+message(STATUS "allocator selected: ${ALLOCATOR}")
 
 # Mingw generates incorrect entry points when using "-pie".
 if(WIN32 OR (HAVE_LIBTCMALLOC AND WITH_STATIC_LIBSTDCXX))
@@ -430,14 +439,15 @@ if(WITH_JAEGER)
 endif()
 
 #option for RGW
-option(WITH_RADOSGW "Rados Gateway is enabled" ON)
-option(WITH_RADOSGW_BEAST_OPENSSL "Rados Gateway's Beast frontend uses OpenSSL" ON)
-option(WITH_RADOSGW_AMQP_ENDPOINT "Rados Gateway's pubsub support for AMQP push endpoint" ON)
-option(WITH_RADOSGW_KAFKA_ENDPOINT "Rados Gateway's pubsub support for Kafka push endpoint" ON)
-option(WITH_RADOSGW_LUA_PACKAGES "Rados Gateway's support for dynamically adding lua packagess" ON)
-option(WITH_RADOSGW_DBSTORE "DBStore backend for Rados Gateway" ON)
-option(WITH_RADOSGW_MOTR "CORTX-Motr backend for Rados Gateway" OFF)
+option(WITH_RADOSGW "RADOS Gateway is enabled" ON)
+option(WITH_RADOSGW_BEAST_OPENSSL "RADOS Gateway's Beast frontend uses OpenSSL" ON)
+option(WITH_RADOSGW_AMQP_ENDPOINT "RADOS Gateway's pubsub support for AMQP push endpoint" ON)
+option(WITH_RADOSGW_KAFKA_ENDPOINT "RADOS Gateway's pubsub support for Kafka push endpoint" ON)
+option(WITH_RADOSGW_LUA_PACKAGES "RADOS Gateway's support for dynamically adding lua packagess" ON)
+option(WITH_RADOSGW_DBSTORE "DBStore backend for RADOS Gateway" ON)
+option(WITH_RADOSGW_MOTR "CORTX-Motr backend for RADOS Gateway" OFF)
 option(WITH_RADOSGW_DAOS "DAOS backend for RADOS Gateway" OFF)
+option(WITH_RADOSGW_D4N "D4N wrapper for RADOS Gateway" ON)
 option(WITH_RADOSGW_SELECT_PARQUET "Support for s3 select on parquet objects" ON)
 option(WITH_RADOSGW_ARROW_FLIGHT "Build arrow flight when not using system-provided arrow" OFF)
 option(WITH_RADOSGW_BACKTRACE_LOGGING "Enable backtraces in rgw logs" OFF)

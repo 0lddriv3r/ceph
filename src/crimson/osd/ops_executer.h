@@ -106,14 +106,20 @@ public:
     virtual entity_inst_t get_orig_source_inst() const = 0;
     virtual uint64_t get_features() const = 0;
     virtual bool has_flag(uint32_t flag) const = 0;
+    virtual entity_name_t get_source() const = 0;
   };
 
   template <class ImplT>
   class ExecutableMessagePimpl final : ExecutableMessage {
     const ImplT* pimpl;
+    // In crimson, conn is independently maintained outside Message.
+    const crimson::net::ConnectionRef conn;
   public:
-    ExecutableMessagePimpl(const ImplT* pimpl) : pimpl(pimpl) {
+    ExecutableMessagePimpl(const ImplT* pimpl,
+                           const crimson::net::ConnectionRef conn)
+      : pimpl(pimpl), conn(conn) {
     }
+
     osd_reqid_t get_reqid() const final {
       return pimpl->get_reqid();
     }
@@ -127,7 +133,13 @@ public:
       return pimpl->get_map_epoch();
     }
     entity_inst_t get_orig_source_inst() const final {
-      return pimpl->get_orig_source_inst();
+      // We can't get the origin source address from the message
+      // since (In Crimson) the connection is maintained
+      // outside of the Message.
+      return entity_inst_t(get_source(), conn->get_peer_addr());
+    }
+    entity_name_t get_source() const final {
+      return pimpl->get_source();
     }
     uint64_t get_features() const final {
       return pimpl->get_features();
@@ -187,7 +199,6 @@ private:
     pg_log_entry_t log_entry;
 
     void apply_to(
-      const eversion_t& at_version,
       std::vector<pg_log_entry_t>& log_entries,
       ObjectContext& processed_obc) &&;
   };
@@ -378,7 +389,8 @@ public:
         op_info,
         abstracted_msg_t{
           std::in_place_type_t<ExecutableMessagePimpl<MsgT>>{},
-          &msg},
+          &msg,
+          conn},
         conn,
         snapc) {
   }
@@ -510,7 +522,6 @@ OpsExecuter::flush_changes_n_do_ops_effects(
       txn
     ).then_interruptible([mut_func=std::move(mut_func),
                           this](auto&& log_entries) mutable {
-      apply_stats();
       auto [submitted, all_completed] =
         std::forward<MutFunc>(mut_func)(std::move(txn),
                                         std::move(obc),

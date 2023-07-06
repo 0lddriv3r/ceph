@@ -375,6 +375,9 @@ class MDSCluster(CephCluster):
         """
         self.mds_daemons[mds_id].signal(sig, silent);
 
+    def mds_is_running(self, mds_id):
+        return self.mds_daemons[mds_id].running()
+
     def newfs(self, name='cephfs', create=True):
         return Filesystem(self._ctx, name=name, create=create)
 
@@ -492,6 +495,17 @@ class MDSCluster(CephCluster):
 
 
 class Filesystem(MDSCluster):
+
+    """
+    Generator for all Filesystems in the cluster.
+    """
+    @classmethod
+    def get_all_fs(cls, ctx):
+        mdsc = MDSCluster(ctx)
+        status = mdsc.status()
+        for fs in status.get_filesystems():
+            yield cls(ctx, fscid=fs['id'])
+
     """
     This object is for driving a CephFS filesystem.  The MDS daemons driven by
     MDSCluster may be shared with other Filesystems.
@@ -1088,6 +1102,10 @@ class Filesystem(MDSCluster):
 
     def rank_fail(self, rank=0):
         self.mon_manager.raw_cluster_cmd("mds", "fail", "{}:{}".format(self.id, rank))
+
+    def rank_is_running(self, rank=0, status=None):
+        name = self.get_rank(rank=rank, status=status)['name']
+        return self.mds_is_running(name)
 
     def get_ranks(self, status=None):
         if status is None:

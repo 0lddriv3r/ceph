@@ -124,6 +124,47 @@
 * RBD: list-watchers C++ API (`Image::list_watchers`) now clears the passed
   `std::list` before potentially appending to it, aligning with the semantics
   of the corresponding C API (`rbd_watchers_list`).
+* The rados python binding is now able to process (opt-in) omap keys as bytes
+  objects. This enables interacting with RADOS omap keys that are not decodeable as
+  UTF-8 strings.
+* Telemetry: Users who are opted-in to telemetry can also opt-in to
+  participating in a leaderboard in the telemetry public
+  dashboards (https://telemetry-public.ceph.com/). Users can now also add a
+  description of the cluster to publicly appear in the leaderboard.
+  For more details, see:
+  https://docs.ceph.com/en/latest/mgr/telemetry/#leaderboard
+  See a sample report with `ceph telemetry preview`.
+  Opt-in to telemetry with `ceph telemetry on`.
+  Opt-in to the leaderboard with
+  `ceph config set mgr mgr/telemetry/leaderboard true`.
+  Add leaderboard description with:
+  `ceph config set mgr mgr/telemetry/leaderboard_description ‘Cluster description’`.
+* CEPHFS: After recovering a Ceph File System post following the disaster recovery
+  procedure, the recovered files under `lost+found` directory can now be deleted.
+* core: cache-tiering is now deprecated.
+* mClock Scheduler: The mClock scheduler (default scheduler in Quincy) has
+  undergone significant usability and design improvements to address the slow
+  backfill issue. Some important changes are:
+  * The 'balanced' profile is set as the default mClock profile because it
+    represents a compromise between prioritizing client IO or recovery IO. Users
+    can then choose either the 'high_client_ops' profile to prioritize client IO
+    or the 'high_recovery_ops' profile to prioritize recovery IO.
+  * QoS parameters like reservation and limit are now specified in terms of a
+    fraction (range: 0.0 to 1.0) of the OSD's IOPS capacity.
+  * The cost parameters (osd_mclock_cost_per_io_usec_* and
+    osd_mclock_cost_per_byte_usec_*) have been removed. The cost of an operation
+    is now determined using the random IOPS and maximum sequential bandwidth
+    capability of the OSD's underlying device.
+  * Degraded object recovery is given higher priority when compared to misplaced
+    object recovery because degraded objects present a data safety issue not
+    present with objects that are merely misplaced. Therefore, backfilling
+    operations with the 'balanced' and 'high_client_ops' mClock profiles may
+    progress slower than what was seen with the 'WeightedPriorityQueue' (WPQ)
+    scheduler.
+  * The QoS allocations in all the mClock profiles are optimized based on the above
+    fixes and enhancements.
+  * For more detailed information see:
+    https://docs.ceph.com/en/latest/rados/configuration/mclock-config-ref/
 
 >=17.2.1
 

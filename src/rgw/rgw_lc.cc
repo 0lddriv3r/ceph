@@ -834,7 +834,7 @@ int RGWLC::handle_multipart_expiration(rgw::sal::Bucket* target,
     if (obj_has_expired(this, cct, obj.meta.mtime, rule.mp_expiration)) {
       rgw_obj_key key(obj.key);
       std::unique_ptr<rgw::sal::MultipartUpload> mpu = target->get_multipart_upload(key.name);
-      int ret = mpu->abort(this, cct);
+      int ret = mpu->abort(this, cct, null_yield);
       if (ret == 0) {
         if (perfcounter) {
           perfcounter->inc(l_rgw_lc_abort_mpu, 1);
@@ -2116,6 +2116,15 @@ int RGWLC::process(int index, int max_lock_secs, LCWorker* worker,
 
       /* fetches the entry pointed to by head.bucket */
       ret = sal_lc->get_entry(lc_shard, head->get_marker(), &entry);
+      if (ret == -ENOENT) {
+        ret = sal_lc->get_next_entry(lc_shard, head->get_marker(), &entry);
+        if (ret < 0) {
+          ldpp_dout(this, 0) << "RGWLC::process() sal_lc->get_next_entry(lc_shard, "
+                             << "head.marker, entry) returned error ret==" << ret
+                             << dendl;
+          goto exit;
+        }
+      }
       if (ret < 0) {
 	ldpp_dout(this, 0) << "RGWLC::process() sal_lc->get_entry(lc_shard, head.marker, entry) "
 			   << "returned error ret==" << ret << dendl;

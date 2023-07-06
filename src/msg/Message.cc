@@ -326,7 +326,10 @@ Message *decode_message(CephContext *cct,
     if (front_crc != footer.front_crc) {
       if (cct) {
 	ldout(cct, 0) << "bad crc in front " << front_crc << " != exp " << footer.front_crc
-		      << " from " << conn->get_peer_addr() << dendl;
+#ifndef WITH_SEASTAR
+	              << " from " << conn->get_peer_addr()
+#endif
+	              << dendl;
 	ldout(cct, 20) << " ";
 	front.hexdump(*_dout);
 	*_dout << dendl;
@@ -336,7 +339,10 @@ Message *decode_message(CephContext *cct,
     if (middle_crc != footer.middle_crc) {
       if (cct) {
 	ldout(cct, 0) << "bad crc in middle " << middle_crc << " != exp " << footer.middle_crc
-		      << " from " << conn->get_peer_addr() << dendl;
+#ifndef WITH_SEASTAR
+	              << " from " << conn->get_peer_addr()
+#endif
+	              << dendl;
 	ldout(cct, 20) << " ";
 	middle.hexdump(*_dout);
 	*_dout << dendl;
@@ -350,7 +356,10 @@ Message *decode_message(CephContext *cct,
       if (data_crc != footer.data_crc) {
 	if (cct) {
 	  ldout(cct, 0) << "bad crc in data " << data_crc << " != exp " << footer.data_crc
-			<< " from " << conn->get_peer_addr() << dendl;
+#ifndef WITH_SEASTAR
+	                << " from " << conn->get_peer_addr()
+#endif
+	                << dendl;
 	  ldout(cct, 20) << " ";
 	  data.hexdump(*_dout);
 	  *_dout << dendl;
@@ -1027,15 +1036,6 @@ void Message::decode_trace(ceph::bufferlist::const_iterator &p, bool create)
 #endif
 }
 
-void Message::encode_otel_trace(ceph::bufferlist &bl, uint64_t features) const
-{
-  tracing::encode(otel_trace, bl);
-}
-
-void Message::decode_otel_trace(ceph::bufferlist::const_iterator &p, bool create)
-{
-  tracing::decode(otel_trace, p);
-}
 
 // This routine is not used for ordinary messages, but only when encapsulating a message
 // for forwarding and routing.  It's also used in a backward compatibility test, which only

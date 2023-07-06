@@ -27,6 +27,8 @@ from ceph.utils import datetime_now
 from orchestrator import OrchestratorError
 from orchestrator._interface import DaemonDescription
 
+from typing import Dict, List
+
 grafana_cert = """-----BEGIN CERTIFICATE-----\nMIICxjCCAa4CEQDIZSujNBlKaLJzmvntjukjMA0GCSqGSIb3DQEBDQUAMCExDTAL\nBgNVBAoMBENlcGgxEDAOBgNVBAMMB2NlcGhhZG0wHhcNMjIwNzEzMTE0NzA3WhcN\nMzIwNzEwMTE0NzA3WjAhMQ0wCwYDVQQKDARDZXBoMRAwDgYDVQQDDAdjZXBoYWRt\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyyMe4DMA+MeYK7BHZMHB\nq7zjliEOcNgxomjU8qbf5USF7Mqrf6+/87XWqj4pCyAW8x0WXEr6A56a+cmBVmt+\nqtWDzl020aoId6lL5EgLLn6/kMDCCJLq++Lg9cEofMSvcZh+lY2f+1p+C+00xent\nrLXvXGOilAZWaQfojT2BpRnNWWIFbpFwlcKrlg2G0cFjV5c1m6a0wpsQ9JHOieq0\nSvwCixajwq3CwAYuuiU1wjI4oJO4Io1+g8yB3nH2Mo/25SApCxMXuXh4kHLQr/T4\n4hqisvG4uJYgKMcSIrWj5o25mclByGi1UI/kZkCUES94i7Z/3ihx4Bad0AMs/9tw\nFwIDAQABMA0GCSqGSIb3DQEBDQUAA4IBAQAf+pwz7Gd7mDwU2LY0TQXsK6/8KGzh\nHuX+ErOb8h5cOAbvCnHjyJFWf6gCITG98k9nxU9NToG0WYuNm/max1y/54f0dtxZ\npUo6KSNl3w6iYCfGOeUIj8isi06xMmeTgMNzv8DYhDt+P2igN6LenqWTVztogkiV\nxQ5ZJFFLEw4sN0CXnrZX3t5ruakxLXLTLKeE0I91YJvjClSBGkVJq26wOKQNHMhx\npWxeydQ5EgPZY+Aviz5Dnxe8aB7oSSovpXByzxURSabOuCK21awW5WJCGNpmqhWK\nZzACBDEstccj57c4OGV0eayHJRsluVr2e9NHRINZA3qdB37e6gsI1xHo\n-----END CERTIFICATE-----\n"""
 
 grafana_key = """-----BEGIN PRIVATE KEY-----\nMIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQDLIx7gMwD4x5gr\nsEdkwcGrvOOWIQ5w2DGiaNTypt/lRIXsyqt/r7/ztdaqPikLIBbzHRZcSvoDnpr5\nyYFWa36q1YPOXTbRqgh3qUvkSAsufr+QwMIIkur74uD1wSh8xK9xmH6VjZ/7Wn4L\n7TTF6e2ste9cY6KUBlZpB+iNPYGlGc1ZYgVukXCVwquWDYbRwWNXlzWbprTCmxD0\nkc6J6rRK/AKLFqPCrcLABi66JTXCMjigk7gijX6DzIHecfYyj/blICkLExe5eHiQ\nctCv9PjiGqKy8bi4liAoxxIitaPmjbmZyUHIaLVQj+RmQJQRL3iLtn/eKHHgFp3Q\nAyz/23AXAgMBAAECggEAVoTB3Mm8azlPlaQB9GcV3tiXslSn+uYJ1duCf0sV52dV\nBzKW8s5fGiTjpiTNhGCJhchowqxoaew+o47wmGc2TvqbpeRLuecKrjScD0GkCYyQ\neM2wlshEbz4FhIZdgS6gbuh9WaM1dW/oaZoBNR5aTYo7xYTmNNeyLA/jO2zr7+4W\n5yES1lMSBXpKk7bDGKYY4bsX2b5RLr2Grh2u2bp7hoLABCEvuu8tSQdWXLEXWpXo\njwmV3hc6tabypIa0mj2Dmn2Dmt1ppSO0AZWG/WAizN3f4Z0r/u9HnbVrVmh0IEDw\n3uf2LP5o3msG9qKCbzv3lMgt9mMr70HOKnJ8ohMSKQKBgQDLkNb+0nr152HU9AeJ\nvdz8BeMxcwxCG77iwZphZ1HprmYKvvXgedqWtS6FRU+nV6UuQoPUbQxJBQzrN1Qv\nwKSlOAPCrTJgNgF/RbfxZTrIgCPuK2KM8I89VZv92TSGi362oQA4MazXC8RAWjoJ\nSu1/PHzK3aXOfVNSLrOWvIYeZQKBgQD/dgT6RUXKg0UhmXj7ExevV+c7oOJTDlMl\nvLngrmbjRgPO9VxLnZQGdyaBJeRngU/UXfNgajT/MU8B5fSKInnTMawv/tW7634B\nw3v6n5kNIMIjJmENRsXBVMllDTkT9S7ApV+VoGnXRccbTiDapBThSGd0wri/CuwK\nNWK1YFOeywKBgEDyI/XG114PBUJ43NLQVWm+wx5qszWAPqV/2S5MVXD1qC6zgCSv\nG9NLWN1CIMimCNg6dm7Wn73IM7fzvhNCJgVkWqbItTLG6DFf3/DPODLx1wTMqLOI\nqFqMLqmNm9l1Nec0dKp5BsjRQzq4zp1aX21hsfrTPmwjxeqJZdioqy2VAoGAXR5X\nCCdSHlSlUW8RE2xNOOQw7KJjfWT+WAYoN0c7R+MQplL31rRU7dpm1bLLRBN11vJ8\nMYvlT5RYuVdqQSP6BkrX+hLJNBvOLbRlL+EXOBrVyVxHCkDe+u7+DnC4epbn+N8P\nLYpwqkDMKB7diPVAizIKTBxinXjMu5fkKDs5n+sCgYBbZheYKk5M0sIxiDfZuXGB\nkf4mJdEkTI1KUGRdCwO/O7hXbroGoUVJTwqBLi1tKqLLarwCITje2T200BYOzj82\nqwRkCXGtXPKnxYEEUOiFx9OeDrzsZV00cxsEnX0Zdj+PucQ/J3Cvd0dWUspJfLHJ\n39gnaegswnz9KMQAvzKFdg==\n-----END PRIVATE KEY-----\n"""
@@ -40,6 +42,7 @@ class FakeInventory:
 class FakeMgr:
     def __init__(self):
         self.config = ''
+        self.set_mon_crush_locations: Dict[str, List[str]] = {}
         self.check_mon_command = MagicMock(side_effect=self._check_mon_command)
         self.mon_command = MagicMock(side_effect=self._check_mon_command)
         self.template = MagicMock()
@@ -55,6 +58,13 @@ class FakeMgr:
             return 0, 'value set', ''
         if prefix in ['auth get']:
             return 0, '[foo]\nkeyring = asdf\n', ''
+        if prefix == 'quorum_status':
+            # actual quorum status output from testing
+            # note in this output all of the mons have blank crush locations
+            return 0, """{"election_epoch": 14, "quorum": [0, 1, 2], "quorum_names": ["vm-00", "vm-01", "vm-02"], "quorum_leader_name": "vm-00", "quorum_age": 101, "features": {"quorum_con": "4540138322906710015", "quorum_mon": ["kraken", "luminous", "mimic", "osdmap-prune", "nautilus", "octopus", "pacific", "elector-pinging", "quincy", "reef"]}, "monmap": {"epoch": 3, "fsid": "9863e1b8-6f24-11ed-8ad8-525400c13ad2", "modified": "2022-11-28T14:00:29.972488Z", "created": "2022-11-28T13:57:55.847497Z", "min_mon_release": 18, "min_mon_release_name": "reef", "election_strategy": 1, "disallowed_leaders: ": "", "stretch_mode": false, "tiebreaker_mon": "", "features": {"persistent": ["kraken", "luminous", "mimic", "osdmap-prune", "nautilus", "octopus", "pacific", "elector-pinging", "quincy", "reef"], "optional": []}, "mons": [{"rank": 0, "name": "vm-00", "public_addrs": {"addrvec": [{"type": "v2", "addr": "192.168.122.61:3300", "nonce": 0}, {"type": "v1", "addr": "192.168.122.61:6789", "nonce": 0}]}, "addr": "192.168.122.61:6789/0", "public_addr": "192.168.122.61:6789/0", "priority": 0, "weight": 0, "crush_location": "{}"}, {"rank": 1, "name": "vm-01", "public_addrs": {"addrvec": [{"type": "v2", "addr": "192.168.122.63:3300", "nonce": 0}, {"type": "v1", "addr": "192.168.122.63:6789", "nonce": 0}]}, "addr": "192.168.122.63:6789/0", "public_addr": "192.168.122.63:6789/0", "priority": 0, "weight": 0, "crush_location": "{}"}, {"rank": 2, "name": "vm-02", "public_addrs": {"addrvec": [{"type": "v2", "addr": "192.168.122.82:3300", "nonce": 0}, {"type": "v1", "addr": "192.168.122.82:6789", "nonce": 0}]}, "addr": "192.168.122.82:6789/0", "public_addr": "192.168.122.82:6789/0", "priority": 0, "weight": 0, "crush_location": "{}"}]}}""", ''
+        if prefix == 'mon set_location':
+            self.set_mon_crush_locations[cmd_dict.get('name')] = cmd_dict.get('args')
+            return 0, '', ''
         return -1, '', 'error'
 
     def get_minimal_ceph_conf(self) -> str:
@@ -289,14 +299,35 @@ log_to_file = False"""
                 _run_cephadm.assert_called_with(
                     'test',
                     f'iscsi.{iscsi_daemon_id}',
-                    'deploy',
-                    [
-                        '--name', f'iscsi.{iscsi_daemon_id}',
-                        '--meta-json', f'{"{"}"service_name": "iscsi.{pool}", "ports": [{api_port}], "ip": null, "deployed_by": [], "rank": null, "rank_generation": null, "extra_container_args": null, "extra_entrypoint_args": null{"}"}',
-                        '--config-json', '-', '--tcp-ports', '3456'
-                    ],
-                    stdin=json.dumps({"config": "", "keyring": f"[client.iscsi.{iscsi_daemon_id}]\nkey = None\n", "files": {"iscsi-gateway.cfg": iscsi_gateway_conf}}),
-                    image='')
+                    ['_orch', 'deploy'],
+                    [],
+                    stdin=json.dumps({
+                        "fsid": "fsid",
+                        "name": f'iscsi.{iscsi_daemon_id}',
+                        "image": '',
+                        "deploy_arguments": [],
+                        "params": {
+                            'tcp_ports': [api_port],
+                        },
+                        "meta": {
+                            'service_name': f'iscsi.{pool}',
+                            'ports': [api_port],
+                            'ip': None,
+                            'deployed_by': [],
+                            'rank': None,
+                            'rank_generation': None,
+                            'extra_container_args': None,
+                            'extra_entrypoint_args': None,
+                        },
+                        "config_blobs": {
+                            "config": "",
+                            "keyring": f"[client.iscsi.{iscsi_daemon_id}]\nkey = None\n",
+                            "files": {
+                                "iscsi-gateway.cfg": iscsi_gateway_conf,
+                            },
+                        }
+                    }),
+                )
 
 
 class TestMonitoring:
@@ -376,24 +407,35 @@ class TestMonitoring:
             with with_service(cephadm_module, AlertManagerSpec()):
                 y = dedent(self._get_config(expected_yaml_url)).lstrip()
                 _run_cephadm.assert_called_with(
-                    "test",
+                    'test',
                     "alertmanager.test",
-                    "deploy",
-                    [
-                        "--name",
-                        "alertmanager.test",
-                        "--meta-json",
-                        ('{"service_name": "alertmanager", "ports": [9093, 9094], "ip": null, "deployed_by": [], "rank": null, '
-                         '"rank_generation": null, "extra_container_args": null, "extra_entrypoint_args": null}'),
-                        "--config-json",
-                        "-",
-                        "--tcp-ports",
-                        "9093 9094",
-                    ],
-                    stdin=json.dumps(
-                        {"files": {"alertmanager.yml": y}, "peers": []}
-                    ),
-                    image="",
+                    ['_orch', 'deploy'],
+                    [],
+                    stdin=json.dumps({
+                        "fsid": "fsid",
+                        "name": 'alertmanager.test',
+                        "image": '',
+                        "deploy_arguments": [],
+                        "params": {
+                            'tcp_ports': [9093, 9094],
+                        },
+                        "meta": {
+                            'service_name': 'alertmanager',
+                            'ports': [9093, 9094],
+                            'ip': None,
+                            'deployed_by': [],
+                            'rank': None,
+                            'rank_generation': None,
+                            'extra_container_args': None,
+                            'extra_entrypoint_args': None,
+                        },
+                        "config_blobs": {
+                            "files": {
+                                "alertmanager.yml": y,
+                            },
+                            "peers": [],
+                        }
+                    }),
                 )
 
     @patch("cephadm.serve.CephadmServe._run_cephadm")
@@ -456,25 +498,40 @@ class TestMonitoring:
 
                 _run_cephadm.assert_called_with(
                     'test',
-                    'alertmanager.test',
-                    'deploy',
-                    [
-                        '--name', 'alertmanager.test',
-                        '--meta-json', '{"service_name": "alertmanager", "ports": [9093, 9094], "ip": null, "deployed_by": [], "rank": null, "rank_generation": null, "extra_container_args": null, "extra_entrypoint_args": null}',
-                        '--config-json', '-', '--tcp-ports', '9093 9094'
-                    ],
+                    "alertmanager.test",
+                    ['_orch', 'deploy'],
+                    [],
                     stdin=json.dumps({
-                        "files": {
-                            "alertmanager.yml": y,
-                            'alertmanager.crt': 'mycert',
-                            'alertmanager.key': 'mykey',
-                            'web.yml': web_config,
-                            'root_cert.pem': 'my_root_cert'
+                        "fsid": "fsid",
+                        "name": 'alertmanager.test',
+                        "image": '',
+                        "deploy_arguments": [],
+                        "params": {
+                            'tcp_ports': [9093, 9094],
                         },
-                        'peers': [],
-                        'web_config': '/etc/alertmanager/web.yml'
+                        "meta": {
+                            'service_name': 'alertmanager',
+                            'ports': [9093, 9094],
+                            'ip': None,
+                            'deployed_by': [],
+                            'rank': None,
+                            'rank_generation': None,
+                            'extra_container_args': None,
+                            'extra_entrypoint_args': None,
+                        },
+                        "config_blobs": {
+                            "files": {
+                                "alertmanager.yml": y,
+                                'alertmanager.crt': 'mycert',
+                                'alertmanager.key': 'mykey',
+                                'web.yml': web_config,
+                                'root_cert.pem': 'my_root_cert'
+                            },
+                            'peers': [],
+                            'web_config': '/etc/alertmanager/web.yml',
+                        }
                     }),
-                    image='')
+                )
 
     @patch("cephadm.serve.CephadmServe._run_cephadm")
     @patch("cephadm.module.CephadmOrchestrator.get_mgr_ip", lambda _: '::1')
@@ -532,21 +589,37 @@ class TestMonitoring:
 
                 _run_cephadm.assert_called_with(
                     'test',
-                    'prometheus.test',
-                    'deploy',
-                    [
-                        '--name', 'prometheus.test',
-                        '--meta-json',
-                        ('{"service_name": "prometheus", "ports": [9095], "ip": null, "deployed_by": [], "rank": null, '
-                         '"rank_generation": null, "extra_container_args": null, "extra_entrypoint_args": null}'),
-                        '--config-json', '-',
-                        '--tcp-ports', '9095'
-                    ],
-                    stdin=json.dumps({"files": {"prometheus.yml": y,
-                                                "/etc/prometheus/alerting/custom_alerts.yml": ""},
-                                      'retention_time': '15d',
-                                      'retention_size': '0'}),
-                    image='')
+                    "prometheus.test",
+                    ['_orch', 'deploy'],
+                    [],
+                    stdin=json.dumps({
+                        "fsid": "fsid",
+                        "name": 'prometheus.test',
+                        "image": '',
+                        "deploy_arguments": [],
+                        "params": {
+                            'tcp_ports': [9095],
+                        },
+                        "meta": {
+                            'service_name': 'prometheus',
+                            'ports': [9095],
+                            'ip': None,
+                            'deployed_by': [],
+                            'rank': None,
+                            'rank_generation': None,
+                            'extra_container_args': None,
+                            'extra_entrypoint_args': None,
+                        },
+                        "config_blobs": {
+                            "files": {
+                                "prometheus.yml": y,
+                                "/etc/prometheus/alerting/custom_alerts.yml": "",
+                            },
+                            'retention_time': '15d',
+                            'retention_size': '0',
+                        },
+                    }),
+                )
 
     @patch("cephadm.serve.CephadmServe._run_cephadm")
     @patch("cephadm.module.CephadmOrchestrator.get_mgr_ip", lambda _: '::1')
@@ -662,29 +735,42 @@ class TestMonitoring:
 
                 _run_cephadm.assert_called_with(
                     'test',
-                    'prometheus.test',
-                    'deploy',
-                    [
-                        '--name', 'prometheus.test',
-                        '--meta-json',
-                        '{"service_name": "prometheus", "ports": [9095], "ip": null, "deployed_by": [], "rank": null, "rank_generation": null, "extra_container_args": null, "extra_entrypoint_args": null}',
-                        '--config-json', '-',
-                        '--tcp-ports', '9095'
-                    ],
+                    "prometheus.test",
+                    ['_orch', 'deploy'],
+                    [],
                     stdin=json.dumps({
-                        'files': {
-                            'prometheus.yml': y,
-                            'root_cert.pem': '',
-                            'mgr_prometheus_cert.pem': '',
-                            'web.yml': web_config,
-                            'prometheus.crt': 'mycert',
-                            'prometheus.key': 'mykey',
-                            "/etc/prometheus/alerting/custom_alerts.yml": "",
+                        "fsid": "fsid",
+                        "name": 'prometheus.test',
+                        "image": '',
+                        "deploy_arguments": [],
+                        "params": {
+                            'tcp_ports': [9095],
                         },
-                        'retention_time': '15d',
-                        'retention_size': '0',
-                        'web_config': '/etc/prometheus/web.yml'}),
-                    image=''
+                        "meta": {
+                            'service_name': 'prometheus',
+                            'ports': [9095],
+                            'ip': None,
+                            'deployed_by': [],
+                            'rank': None,
+                            'rank_generation': None,
+                            'extra_container_args': None,
+                            'extra_entrypoint_args': None,
+                        },
+                        "config_blobs": {
+                            'files': {
+                                'prometheus.yml': y,
+                                'root_cert.pem': '',
+                                'mgr_prometheus_cert.pem': '',
+                                'web.yml': web_config,
+                                'prometheus.crt': 'mycert',
+                                'prometheus.key': 'mykey',
+                                "/etc/prometheus/alerting/custom_alerts.yml": "",
+                            },
+                            'retention_time': '15d',
+                            'retention_size': '0',
+                            'web_config': '/etc/prometheus/web.yml',
+                        },
+                    }),
                 )
 
     @patch("cephadm.serve.CephadmServe._run_cephadm")
@@ -726,18 +812,34 @@ class TestMonitoring:
 
                 _run_cephadm.assert_called_with(
                     'test',
-                    'loki.test',
-                    'deploy',
-                    [
-                        '--name', 'loki.test',
-                        '--meta-json',
-                        ('{"service_name": "loki", "ports": [3100], "ip": null, "deployed_by": [], "rank": null, '
-                         '"rank_generation": null, "extra_container_args": null, "extra_entrypoint_args": null}'),
-                        '--config-json', '-',
-                        '--tcp-ports', '3100'
-                    ],
-                    stdin=json.dumps({"files": {"loki.yml": y}}),
-                    image='')
+                    "loki.test",
+                    ['_orch', 'deploy'],
+                    [],
+                    stdin=json.dumps({
+                        "fsid": "fsid",
+                        "name": 'loki.test',
+                        "image": '',
+                        "deploy_arguments": [],
+                        "params": {
+                            'tcp_ports': [3100],
+                        },
+                        "meta": {
+                            'service_name': 'loki',
+                            'ports': [3100],
+                            'ip': None,
+                            'deployed_by': [],
+                            'rank': None,
+                            'rank_generation': None,
+                            'extra_container_args': None,
+                            'extra_entrypoint_args': None,
+                        },
+                        "config_blobs": {
+                            "files": {
+                                "loki.yml": y
+                            },
+                        },
+                    }),
+                )
 
     @patch("cephadm.serve.CephadmServe._run_cephadm")
     def test_promtail_config(self, _run_cephadm, cephadm_module: CephadmOrchestrator):
@@ -768,18 +870,34 @@ class TestMonitoring:
 
                 _run_cephadm.assert_called_with(
                     'test',
-                    'promtail.test',
-                    'deploy',
-                    [
-                        '--name', 'promtail.test',
-                        '--meta-json',
-                        ('{"service_name": "promtail", "ports": [9080], "ip": null, "deployed_by": [], "rank": null, '
-                         '"rank_generation": null, "extra_container_args": null, "extra_entrypoint_args": null}'),
-                        '--config-json', '-',
-                        '--tcp-ports', '9080'
-                    ],
-                    stdin=json.dumps({"files": {"promtail.yml": y}}),
-                    image='')
+                    "promtail.test",
+                    ['_orch', 'deploy'],
+                    [],
+                    stdin=json.dumps({
+                        "fsid": "fsid",
+                        "name": 'promtail.test',
+                        "image": '',
+                        "deploy_arguments": [],
+                        "params": {
+                            'tcp_ports': [9080],
+                        },
+                        "meta": {
+                            'service_name': 'promtail',
+                            'ports': [9080],
+                            'ip': None,
+                            'deployed_by': [],
+                            'rank': None,
+                            'rank_generation': None,
+                            'extra_container_args': None,
+                            'extra_entrypoint_args': None,
+                        },
+                        "config_blobs": {
+                            "files": {
+                                "promtail.yml": y
+                            },
+                        },
+                    }),
+                )
 
     @patch("cephadm.serve.CephadmServe._run_cephadm")
     @patch("cephadm.module.CephadmOrchestrator.get_mgr_ip", lambda _: '1::4')
@@ -851,16 +969,32 @@ class TestMonitoring:
 
                 _run_cephadm.assert_called_with(
                     'test',
-                    'grafana.test',
-                    'deploy',
-                    [
-                        '--name', 'grafana.test',
-                        '--meta-json',
-                        ('{"service_name": "grafana", "ports": [3000], "ip": null, "deployed_by": [], "rank": null, '
-                         '"rank_generation": null, "extra_container_args": null, "extra_entrypoint_args": null}'),
-                        '--config-json', '-', '--tcp-ports', '3000'],
-                    stdin=json.dumps({"files": files}),
-                    image='')
+                    "grafana.test",
+                    ['_orch', 'deploy'],
+                    [],
+                    stdin=json.dumps({
+                        "fsid": "fsid",
+                        "name": 'grafana.test',
+                        "image": '',
+                        "deploy_arguments": [],
+                        "params": {
+                            'tcp_ports': [3000],
+                        },
+                        "meta": {
+                            'service_name': 'grafana',
+                            'ports': [3000],
+                            'ip': None,
+                            'deployed_by': [],
+                            'rank': None,
+                            'rank_generation': None,
+                            'extra_container_args': None,
+                            'extra_entrypoint_args': None,
+                        },
+                        "config_blobs": {
+                            "files": files,
+                        },
+                    }),
+                )
 
     @patch("cephadm.serve.CephadmServe._run_cephadm", _run_cephadm('{}'))
     def test_grafana_initial_admin_pw(self, cephadm_module: CephadmOrchestrator):
@@ -881,6 +1015,54 @@ class TestMonitoring:
                                     '  enabled = true\n'
                                     "  org_name = 'Main Org.'\n"
                                     "  org_role = 'Viewer'\n"
+                                    '[server]\n'
+                                    "  domain = 'bootstrap.storage.lab'\n"
+                                    '  protocol = https\n'
+                                    '  cert_file = /etc/grafana/certs/cert_file\n'
+                                    '  cert_key = /etc/grafana/certs/cert_key\n'
+                                    '  http_port = 3000\n'
+                                    '  http_addr = \n'
+                                    '[snapshots]\n'
+                                    '  external_enabled = false\n'
+                                    '[security]\n'
+                                    '  admin_user = admin\n'
+                                    '  admin_password = secure\n'
+                                    '  cookie_secure = true\n'
+                                    '  cookie_samesite = none\n'
+                                    '  allow_embedding = true',
+                                'provisioning/datasources/ceph-dashboard.yml':
+                                    "# This file is generated by cephadm.\n"
+                                    "apiVersion: 1\n\n"
+                                    'deleteDatasources:\n\n'
+                                    'datasources:\n\n'
+                                    "  - name: 'Loki'\n"
+                                    "    type: 'loki'\n"
+                                    "    access: 'proxy'\n"
+                                    "    url: ''\n"
+                                    '    basicAuth: false\n'
+                                    '    isDefault: false\n'
+                                    '    editable: false',
+                                'certs/cert_file': ANY,
+                                'certs/cert_key': ANY}}, ['secure_monitoring_stack:False'])
+
+    @patch("cephadm.serve.CephadmServe._run_cephadm", _run_cephadm('{}'))
+    def test_grafana_no_anon_access(self, cephadm_module: CephadmOrchestrator):
+        # with anonymous_access set to False, expecting the [auth.anonymous] section
+        # to not be present in the grafana config. Note that we require an initial_admin_password
+        # to be provided when anonymous_access is False
+        with with_host(cephadm_module, 'test'):
+            with with_service(cephadm_module, ServiceSpec('mgr')) as _, \
+                    with_service(cephadm_module, GrafanaSpec(anonymous_access=False, initial_admin_password='secure')):
+                out = cephadm_module.cephadm_services['grafana'].generate_config(
+                    CephadmDaemonDeploySpec('test', 'daemon', 'grafana'))
+                assert out == (
+                    {
+                        'files':
+                            {
+                                'grafana.ini':
+                                    '# This file is generated by cephadm.\n'
+                                    '[users]\n'
+                                    '  default_theme = light\n'
                                     '[server]\n'
                                     "  domain = 'bootstrap.storage.lab'\n"
                                     '  protocol = https\n'
@@ -933,16 +1115,32 @@ spec:
                     CephadmServe(cephadm_module)._check_daemons()
 
                     _run_cephadm.assert_called_with(
-                        'test', 'alertmanager.test', 'deploy', [
-                            '--name', 'alertmanager.test',
-                            '--meta-json', ('{"service_name": "alertmanager", "ports": [4200, 9094], "ip": null, "deployed_by": [], "rank": null, '
-                                            '"rank_generation": null, "extra_container_args": null, "extra_entrypoint_args": null}'),
-                            '--config-json', '-',
-                            '--tcp-ports', '4200 9094',
-                            '--reconfig'
-                        ],
-                        stdin='{}',
-                        image='')
+                        'test',
+                        "alertmanager.test",
+                        ['_orch', 'deploy'],
+                        [],
+                        stdin=json.dumps({
+                            "fsid": "fsid",
+                            "name": 'alertmanager.test',
+                            "image": '',
+                            "deploy_arguments": [],
+                            "params": {
+                                'tcp_ports': [4200, 9094],
+                                'reconfig': True,
+                            },
+                            "meta": {
+                                'service_name': 'alertmanager',
+                                'ports': [4200, 9094],
+                                'ip': None,
+                                'deployed_by': [],
+                                'rank': None,
+                                'rank_generation': None,
+                                'extra_container_args': None,
+                                'extra_entrypoint_args': None,
+                            },
+                            "config_blobs": {},
+                        }),
+                    )
 
 
 class TestRGWService:
@@ -981,6 +1179,27 @@ class TestRGWService:
                 assert f == expected
 
 
+class TestMonService:
+
+    def test_set_crush_locations(self, cephadm_module: CephadmOrchestrator):
+        mgr = FakeMgr()
+        mon_service = MonService(mgr)
+        mon_spec = ServiceSpec(service_type='mon', crush_locations={'vm-00': ['datacenter=a', 'rack=1'], 'vm-01': ['datacenter=a'], 'vm-02': ['datacenter=b', 'rack=3']})
+
+        mon_daemons = [
+            DaemonDescription(daemon_type='mon', daemon_id='vm-00', hostname='vm-00'),
+            DaemonDescription(daemon_type='mon', daemon_id='vm-01', hostname='vm-01'),
+            DaemonDescription(daemon_type='mon', daemon_id='vm-02', hostname='vm-02')
+        ]
+        mon_service.set_crush_locations(mon_daemons, mon_spec)
+        assert 'vm-00' in mgr.set_mon_crush_locations
+        assert mgr.set_mon_crush_locations['vm-00'] == ['datacenter=a', 'rack=1']
+        assert 'vm-01' in mgr.set_mon_crush_locations
+        assert mgr.set_mon_crush_locations['vm-01'] == ['datacenter=a']
+        assert 'vm-02' in mgr.set_mon_crush_locations
+        assert mgr.set_mon_crush_locations['vm-02'] == ['datacenter=b', 'rack=3']
+
+
 class TestSNMPGateway:
 
     @patch("cephadm.serve.CephadmServe._run_cephadm")
@@ -1004,18 +1223,29 @@ class TestSNMPGateway:
             with with_service(cephadm_module, spec):
                 _run_cephadm.assert_called_with(
                     'test',
-                    'snmp-gateway.test',
-                    'deploy',
-                    [
-                        '--name', 'snmp-gateway.test',
-                        '--meta-json',
-                        ('{"service_name": "snmp-gateway", "ports": [9464], "ip": null, "deployed_by": [], "rank": null, '
-                         '"rank_generation": null, "extra_container_args": null, "extra_entrypoint_args": null}'),
-                        '--config-json', '-',
-                        '--tcp-ports', '9464'
-                    ],
-                    stdin=json.dumps(config),
-                    image=''
+                    "snmp-gateway.test",
+                    ['_orch', 'deploy'],
+                    [],
+                    stdin=json.dumps({
+                        "fsid": "fsid",
+                        "name": 'snmp-gateway.test',
+                        "image": '',
+                        "deploy_arguments": [],
+                        "params": {
+                            'tcp_ports': [9464],
+                        },
+                        "meta": {
+                            'service_name': 'snmp-gateway',
+                            'ports': [9464],
+                            'ip': None,
+                            'deployed_by': [],
+                            'rank': None,
+                            'rank_generation': None,
+                            'extra_container_args': None,
+                            'extra_entrypoint_args': None,
+                        },
+                        "config_blobs": config,
+                    }),
                 )
 
     @patch("cephadm.serve.CephadmServe._run_cephadm")
@@ -1040,18 +1270,29 @@ class TestSNMPGateway:
             with with_service(cephadm_module, spec):
                 _run_cephadm.assert_called_with(
                     'test',
-                    'snmp-gateway.test',
-                    'deploy',
-                    [
-                        '--name', 'snmp-gateway.test',
-                        '--meta-json',
-                        ('{"service_name": "snmp-gateway", "ports": [9465], "ip": null, "deployed_by": [], "rank": null, '
-                         '"rank_generation": null, "extra_container_args": null, "extra_entrypoint_args": null}'),
-                        '--config-json', '-',
-                        '--tcp-ports', '9465'
-                    ],
-                    stdin=json.dumps(config),
-                    image=''
+                    "snmp-gateway.test",
+                    ['_orch', 'deploy'],
+                    [],
+                    stdin=json.dumps({
+                        "fsid": "fsid",
+                        "name": 'snmp-gateway.test',
+                        "image": '',
+                        "deploy_arguments": [],
+                        "params": {
+                            'tcp_ports': [9465],
+                        },
+                        "meta": {
+                            'service_name': 'snmp-gateway',
+                            'ports': [9465],
+                            'ip': None,
+                            'deployed_by': [],
+                            'rank': None,
+                            'rank_generation': None,
+                            'extra_container_args': None,
+                            'extra_entrypoint_args': None,
+                        },
+                        "config_blobs": config,
+                    }),
                 )
 
     @patch("cephadm.serve.CephadmServe._run_cephadm")
@@ -1080,18 +1321,29 @@ class TestSNMPGateway:
             with with_service(cephadm_module, spec):
                 _run_cephadm.assert_called_with(
                     'test',
-                    'snmp-gateway.test',
-                    'deploy',
-                    [
-                        '--name', 'snmp-gateway.test',
-                        '--meta-json',
-                        ('{"service_name": "snmp-gateway", "ports": [9464], "ip": null, "deployed_by": [], "rank": null, '
-                         '"rank_generation": null, "extra_container_args": null, "extra_entrypoint_args": null}'),
-                        '--config-json', '-',
-                        '--tcp-ports', '9464'
-                    ],
-                    stdin=json.dumps(config),
-                    image=''
+                    "snmp-gateway.test",
+                    ['_orch', 'deploy'],
+                    [],
+                    stdin=json.dumps({
+                        "fsid": "fsid",
+                        "name": 'snmp-gateway.test',
+                        "image": '',
+                        "deploy_arguments": [],
+                        "params": {
+                            'tcp_ports': [9464],
+                        },
+                        "meta": {
+                            'service_name': 'snmp-gateway',
+                            'ports': [9464],
+                            'ip': None,
+                            'deployed_by': [],
+                            'rank': None,
+                            'rank_generation': None,
+                            'extra_container_args': None,
+                            'extra_entrypoint_args': None,
+                        },
+                        "config_blobs": config,
+                    }),
                 )
 
     @patch("cephadm.serve.CephadmServe._run_cephadm")
@@ -1125,28 +1377,50 @@ class TestSNMPGateway:
             with with_service(cephadm_module, spec):
                 _run_cephadm.assert_called_with(
                     'test',
-                    'snmp-gateway.test',
-                    'deploy',
-                    [
-                        '--name', 'snmp-gateway.test',
-                        '--meta-json',
-                        ('{"service_name": "snmp-gateway", "ports": [9464], "ip": null, "deployed_by": [], "rank": null, '
-                         '"rank_generation": null, "extra_container_args": null, "extra_entrypoint_args": null}'),
-                        '--config-json', '-',
-                        '--tcp-ports', '9464'
-                    ],
-                    stdin=json.dumps(config),
-                    image=''
+                    "snmp-gateway.test",
+                    ['_orch', 'deploy'],
+                    [],
+                    stdin=json.dumps({
+                        "fsid": "fsid",
+                        "name": 'snmp-gateway.test',
+                        "image": '',
+                        "deploy_arguments": [],
+                        "params": {
+                            'tcp_ports': [9464],
+                        },
+                        "meta": {
+                            'service_name': 'snmp-gateway',
+                            'ports': [9464],
+                            'ip': None,
+                            'deployed_by': [],
+                            'rank': None,
+                            'rank_generation': None,
+                            'extra_container_args': None,
+                            'extra_entrypoint_args': None,
+                        },
+                        "config_blobs": config,
+                    }),
                 )
 
 
 class TestIngressService:
 
+    @pytest.mark.parametrize(
+        "enable_haproxy_protocol",
+        [False, True],
+    )
     @patch("cephadm.inventory.Inventory.get_addr")
     @patch("cephadm.utils.resolve_ip")
     @patch("cephadm.inventory.HostCache.get_daemons_by_service")
     @patch("cephadm.serve.CephadmServe._run_cephadm")
-    def test_ingress_config_nfs_multiple_nfs_same_rank(self, _run_cephadm, _get_daemons_by_service, _resolve_ip, _get_addr, cephadm_module: CephadmOrchestrator):
+    def test_ingress_config_nfs_multiple_nfs_same_rank(
+        self,
+        _run_cephadm,
+        _get_daemons_by_service,
+        _resolve_ip, _get_addr,
+        cephadm_module: CephadmOrchestrator,
+        enable_haproxy_protocol: bool,
+    ):
         _run_cephadm.side_effect = async_side_effect(('{}', '', 0))
 
         def fake_resolve_ip(hostname: str) -> str:
@@ -1162,18 +1436,27 @@ class TestIngressService:
             return hostname
         _get_addr.side_effect = fake_get_addr
 
-        nfs_service = NFSServiceSpec(service_id="foo", placement=PlacementSpec(count=1, hosts=['host1', 'host2']),
-                                     port=12049)
+        nfs_service = NFSServiceSpec(
+            service_id="foo",
+            placement=PlacementSpec(
+                count=1,
+                hosts=['host1', 'host2']),
+            port=12049,
+            enable_haproxy_protocol=enable_haproxy_protocol,
+        )
 
-        ispec = IngressSpec(service_type='ingress',
-                            service_id='nfs.foo',
-                            backend_service='nfs.foo',
-                            frontend_port=2049,
-                            monitor_port=9049,
-                            virtual_ip='192.168.122.100/24',
-                            monitor_user='admin',
-                            monitor_password='12345',
-                            keepalived_password='12345')
+        ispec = IngressSpec(
+            service_type='ingress',
+            service_id='nfs.foo',
+            backend_service='nfs.foo',
+            frontend_port=2049,
+            monitor_port=9049,
+            virtual_ip='192.168.122.100/24',
+            monitor_user='admin',
+            monitor_password='12345',
+            keepalived_password='12345',
+            enable_haproxy_protocol=enable_haproxy_protocol,
+        )
 
         cephadm_module.spec_store._specs = {
             'nfs.foo': nfs_service,
@@ -1188,46 +1471,47 @@ class TestIngressService:
         # for the host1 nfs daemon as we'll end up giving that
         # one higher rank_generation but the same rank as the one
         # on host2
+        haproxy_txt = (
+            '# This file is generated by cephadm.\n'
+            'global\n'
+            '    log         127.0.0.1 local2\n'
+            '    chroot      /var/lib/haproxy\n'
+            '    pidfile     /var/lib/haproxy/haproxy.pid\n'
+            '    maxconn     8000\n'
+            '    daemon\n'
+            '    stats socket /var/lib/haproxy/stats\n\n'
+            'defaults\n'
+            '    mode                    tcp\n'
+            '    log                     global\n'
+            '    timeout queue           1m\n'
+            '    timeout connect         10s\n'
+            '    timeout client          1m\n'
+            '    timeout server          1m\n'
+            '    timeout check           10s\n'
+            '    maxconn                 8000\n\n'
+            'frontend stats\n'
+            '    mode http\n'
+            '    bind 192.168.122.100:9049\n'
+            '    bind host1:9049\n'
+            '    stats enable\n'
+            '    stats uri /stats\n'
+            '    stats refresh 10s\n'
+            '    stats auth admin:12345\n'
+            '    http-request use-service prometheus-exporter if { path /metrics }\n'
+            '    monitor-uri /health\n\n'
+            'frontend frontend\n'
+            '    bind 192.168.122.100:2049\n'
+            '    default_backend backend\n\n'
+            'backend backend\n'
+            '    mode        tcp\n'
+            '    balance     source\n'
+            '    hash-type   consistent\n'
+        )
+        if enable_haproxy_protocol:
+            haproxy_txt += '    default-server send-proxy-v2\n'
+        haproxy_txt += '    server nfs.foo.0 192.168.122.111:12049\n'
         haproxy_expected_conf = {
-            'files':
-                {
-                    'haproxy.cfg':
-                        '# This file is generated by cephadm.\n'
-                        'global\n'
-                        '    log         127.0.0.1 local2\n'
-                        '    chroot      /var/lib/haproxy\n'
-                        '    pidfile     /var/lib/haproxy/haproxy.pid\n'
-                        '    maxconn     8000\n'
-                        '    daemon\n'
-                        '    stats socket /var/lib/haproxy/stats\n\n'
-                        'defaults\n'
-                        '    mode                    tcp\n'
-                        '    log                     global\n'
-                        '    timeout queue           1m\n'
-                        '    timeout connect         10s\n'
-                        '    timeout client          1m\n'
-                        '    timeout server          1m\n'
-                        '    timeout check           10s\n'
-                        '    maxconn                 8000\n\n'
-                        'frontend stats\n'
-                        '    mode http\n'
-                        '    bind 192.168.122.100:9049\n'
-                        '    bind host1:9049\n'
-                        '    stats enable\n'
-                        '    stats uri /stats\n'
-                        '    stats refresh 10s\n'
-                        '    stats auth admin:12345\n'
-                        '    http-request use-service prometheus-exporter if { path /metrics }\n'
-                        '    monitor-uri /health\n\n'
-                        'frontend frontend\n'
-                        '    bind 192.168.122.100:2049\n'
-                        '    default_backend backend\n\n'
-                        'backend backend\n'
-                        '    mode        tcp\n'
-                        '    balance     source\n'
-                        '    hash-type   consistent\n'
-                        '    server nfs.foo.0 192.168.122.111:12049\n'
-                }
+            'files': {'haproxy.cfg': haproxy_txt}
         }
 
         # verify we get the same cfg regardless of the order in which the nfs daemons are returned
@@ -1630,6 +1914,288 @@ class TestIngressService:
 
                 assert haproxy_generated_conf[0] == haproxy_expected_conf
 
+    @patch("cephadm.serve.CephadmServe._run_cephadm")
+    @patch("cephadm.services.nfs.NFSService.fence_old_ranks", MagicMock())
+    @patch("cephadm.services.nfs.NFSService.run_grace_tool", MagicMock())
+    @patch("cephadm.services.nfs.NFSService.purge", MagicMock())
+    @patch("cephadm.services.nfs.NFSService.create_rados_config_obj", MagicMock())
+    def test_keepalive_only_nfs_config(self, _run_cephadm, cephadm_module: CephadmOrchestrator):
+        _run_cephadm.side_effect = async_side_effect(('{}', '', 0))
+
+        with with_host(cephadm_module, 'test', addr='1.2.3.7'):
+            cephadm_module.cache.update_host_networks('test', {
+                '1.2.3.0/24': {
+                    'if0': ['1.2.3.4/32']
+                }
+            })
+
+            # Check the ingress with multiple VIPs
+            s = NFSServiceSpec(service_id="foo", placement=PlacementSpec(count=1),
+                               virtual_ip='1.2.3.0/24')
+
+            ispec = IngressSpec(service_type='ingress',
+                                service_id='test',
+                                backend_service='nfs.foo',
+                                monitor_port=8999,
+                                monitor_user='admin',
+                                monitor_password='12345',
+                                keepalived_password='12345',
+                                virtual_ip='1.2.3.0/24',
+                                keepalive_only=True)
+            with with_service(cephadm_module, s) as _, with_service(cephadm_module, ispec) as _:
+                nfs_generated_conf, _ = cephadm_module.cephadm_services['nfs'].generate_config(
+                    CephadmDaemonDeploySpec(host='test', daemon_id='foo.test.0.0', service_name=s.service_name()))
+                ganesha_conf = nfs_generated_conf['files']['ganesha.conf']
+                assert "Bind_addr = 1.2.3.0/24" in ganesha_conf
+
+                keepalived_generated_conf = cephadm_module.cephadm_services['ingress'].keepalived_generate_config(
+                    CephadmDaemonDeploySpec(host='test', daemon_id='ingress', service_name=ispec.service_name()))
+
+                keepalived_expected_conf = {
+                    'files':
+                        {
+                            'keepalived.conf':
+                                '# This file is generated by cephadm.\n'
+                                'vrrp_script check_backend {\n    '
+                                'script "/usr/bin/false"\n    '
+                                'weight -20\n    '
+                                'interval 2\n    '
+                                'rise 2\n    '
+                                'fall 2\n}\n\n'
+                                'vrrp_instance VI_0 {\n  '
+                                'state MASTER\n  '
+                                'priority 100\n  '
+                                'interface if0\n  '
+                                'virtual_router_id 50\n  '
+                                'advert_int 1\n  '
+                                'authentication {\n      '
+                                'auth_type PASS\n      '
+                                'auth_pass 12345\n  '
+                                '}\n  '
+                                'unicast_src_ip 1.2.3.7\n  '
+                                'unicast_peer {\n  '
+                                '}\n  '
+                                'virtual_ipaddress {\n    '
+                                '1.2.3.0/24 dev if0\n  '
+                                '}\n  '
+                                'track_script {\n      '
+                                'check_backend\n  }\n'
+                                '}\n'
+                        }
+                }
+
+                # check keepalived config
+                assert keepalived_generated_conf[0] == keepalived_expected_conf
+
+    @patch("cephadm.services.nfs.NFSService.fence_old_ranks", MagicMock())
+    @patch("cephadm.services.nfs.NFSService.run_grace_tool", MagicMock())
+    @patch("cephadm.services.nfs.NFSService.purge", MagicMock())
+    @patch("cephadm.services.nfs.NFSService.create_rados_config_obj", MagicMock())
+    @patch("cephadm.inventory.Inventory.keys")
+    @patch("cephadm.inventory.Inventory.get_addr")
+    @patch("cephadm.utils.resolve_ip")
+    @patch("cephadm.inventory.HostCache.get_daemons_by_service")
+    @patch("cephadm.serve.CephadmServe._run_cephadm")
+    def test_ingress_config_nfs_proxy_protocol(
+        self,
+        _run_cephadm,
+        _get_daemons_by_service,
+        _resolve_ip,
+        _get_addr,
+        _inventory_keys,
+        cephadm_module: CephadmOrchestrator,
+    ):
+        """Verify that setting enable_haproxy_protocol for both ingress and
+        nfs services sets the desired configuration parameters in both
+        the haproxy config and nfs ganesha config.
+        """
+        _run_cephadm.side_effect = async_side_effect(('{}', '', 0))
+
+        def fake_resolve_ip(hostname: str) -> str:
+            if hostname in ('host1', "192.168.122.111"):
+                return '192.168.122.111'
+            elif hostname in ('host2', '192.168.122.222'):
+                return '192.168.122.222'
+            else:
+                raise KeyError(hostname)
+        _resolve_ip.side_effect = fake_resolve_ip
+        _get_addr.side_effect = fake_resolve_ip
+
+        def fake_keys():
+            return ['host1', 'host2']
+        _inventory_keys.side_effect = fake_keys
+
+        nfs_service = NFSServiceSpec(
+            service_id="foo",
+            placement=PlacementSpec(
+                count=1,
+                hosts=['host1', 'host2']),
+            port=12049,
+            enable_haproxy_protocol=True,
+        )
+
+        ispec = IngressSpec(
+            service_type='ingress',
+            service_id='nfs.foo',
+            backend_service='nfs.foo',
+            frontend_port=2049,
+            monitor_port=9049,
+            virtual_ip='192.168.122.100/24',
+            monitor_user='admin',
+            monitor_password='12345',
+            keepalived_password='12345',
+            enable_haproxy_protocol=True,
+        )
+
+        cephadm_module.spec_store._specs = {
+            'nfs.foo': nfs_service,
+            'ingress.nfs.foo': ispec
+        }
+        cephadm_module.spec_store.spec_created = {
+            'nfs.foo': datetime_now(),
+            'ingress.nfs.foo': datetime_now()
+        }
+
+        haproxy_txt = (
+            '# This file is generated by cephadm.\n'
+            'global\n'
+            '    log         127.0.0.1 local2\n'
+            '    chroot      /var/lib/haproxy\n'
+            '    pidfile     /var/lib/haproxy/haproxy.pid\n'
+            '    maxconn     8000\n'
+            '    daemon\n'
+            '    stats socket /var/lib/haproxy/stats\n\n'
+            'defaults\n'
+            '    mode                    tcp\n'
+            '    log                     global\n'
+            '    timeout queue           1m\n'
+            '    timeout connect         10s\n'
+            '    timeout client          1m\n'
+            '    timeout server          1m\n'
+            '    timeout check           10s\n'
+            '    maxconn                 8000\n\n'
+            'frontend stats\n'
+            '    mode http\n'
+            '    bind 192.168.122.100:9049\n'
+            '    bind 192.168.122.111:9049\n'
+            '    stats enable\n'
+            '    stats uri /stats\n'
+            '    stats refresh 10s\n'
+            '    stats auth admin:12345\n'
+            '    http-request use-service prometheus-exporter if { path /metrics }\n'
+            '    monitor-uri /health\n\n'
+            'frontend frontend\n'
+            '    bind 192.168.122.100:2049\n'
+            '    default_backend backend\n\n'
+            'backend backend\n'
+            '    mode        tcp\n'
+            '    balance     source\n'
+            '    hash-type   consistent\n'
+            '    default-server send-proxy-v2\n'
+            '    server nfs.foo.0 192.168.122.111:12049\n'
+        )
+        haproxy_expected_conf = {
+            'files': {'haproxy.cfg': haproxy_txt}
+        }
+
+        nfs_ganesha_txt = (
+            "# This file is generated by cephadm.\n"
+            'NFS_CORE_PARAM {\n'
+            '        Enable_NLM = false;\n'
+            '        Enable_RQUOTA = false;\n'
+            '        Protocols = 4;\n'
+            '        NFS_Port = 2049;\n'
+            '        HAProxy_Hosts = 192.168.122.111, 192.168.122.222;\n'
+            '}\n'
+            '\n'
+            'NFSv4 {\n'
+            '        Delegations = false;\n'
+            "        RecoveryBackend = 'rados_cluster';\n"
+            '        Minor_Versions = 1, 2;\n'
+            '}\n'
+            '\n'
+            'RADOS_KV {\n'
+            '        UserId = "nfs.foo.test.0.0";\n'
+            '        nodeid = "nfs.foo.None";\n'
+            '        pool = ".nfs";\n'
+            '        namespace = "foo";\n'
+            '}\n'
+            '\n'
+            'RADOS_URLS {\n'
+            '        UserId = "nfs.foo.test.0.0";\n'
+            '        watch_url = '
+            '"rados://.nfs/foo/conf-nfs.foo";\n'
+            '}\n'
+            '\n'
+            'RGW {\n'
+            '        cluster = "ceph";\n'
+            '        name = "client.nfs.foo.test.0.0-rgw";\n'
+            '}\n'
+            '\n'
+            "%url    rados://.nfs/foo/conf-nfs.foo"
+        )
+        nfs_expected_conf = {
+            'files': {'ganesha.conf': nfs_ganesha_txt},
+            'config': '',
+            'extra_args': ['-N', 'NIV_EVENT'],
+            'keyring': (
+                '[client.nfs.foo.test.0.0]\n'
+                'key = None\n'
+            ),
+            'namespace': 'foo',
+            'pool': '.nfs',
+            'rgw': {
+                'cluster': 'ceph',
+                'keyring': (
+                    '[client.nfs.foo.test.0.0-rgw]\n'
+                    'key = None\n'
+                ),
+                'user': 'nfs.foo.test.0.0-rgw',
+            },
+            'userid': 'nfs.foo.test.0.0',
+        }
+
+        nfs_daemons = [
+            DaemonDescription(
+                daemon_type='nfs',
+                daemon_id='foo.0.1.host1.qwerty',
+                hostname='host1',
+                rank=0,
+                rank_generation=1,
+                ports=[12049],
+            ),
+            DaemonDescription(
+                daemon_type='nfs',
+                daemon_id='foo.0.0.host2.abcdef',
+                hostname='host2',
+                rank=0,
+                rank_generation=0,
+                ports=[12049],
+            ),
+        ]
+        _get_daemons_by_service.return_value = nfs_daemons
+
+        ingress_svc = cephadm_module.cephadm_services['ingress']
+        nfs_svc = cephadm_module.cephadm_services['nfs']
+
+        haproxy_generated_conf, _ = ingress_svc.haproxy_generate_config(
+            CephadmDaemonDeploySpec(
+                host='host1',
+                daemon_id='ingress',
+                service_name=ispec.service_name(),
+            ),
+        )
+        assert haproxy_generated_conf == haproxy_expected_conf
+
+        nfs_generated_conf, _ = nfs_svc.generate_config(
+            CephadmDaemonDeploySpec(
+                host='test',
+                daemon_id='foo.test.0.0',
+                service_name=nfs_service.service_name(),
+            ),
+        )
+        assert nfs_generated_conf == nfs_expected_conf
+
 
 class TestCephFsMirror:
     @patch("cephadm.serve.CephadmServe._run_cephadm")
@@ -1657,19 +2223,29 @@ class TestJaeger:
             with with_service(cephadm_module, spec):
                 _run_cephadm.assert_called_with(
                     'test',
-                    'jaeger-query.test',
-                    'deploy',
-                    [
-                        '--name', 'jaeger-query.test',
-                        '--meta-json',
-                        ('{"service_name": "jaeger-query", "ports": [16686], "ip": null, "deployed_by": [], "rank": null, '
-                         '"rank_generation": null, "extra_container_args": null, "extra_entrypoint_args": null}'),
-                        '--config-json', '-',
-                        '--tcp-ports', '16686'
-
-                    ],
-                    stdin=json.dumps(config),
-                    image=''
+                    "jaeger-query.test",
+                    ['_orch', 'deploy'],
+                    [],
+                    stdin=json.dumps({
+                        "fsid": "fsid",
+                        "name": 'jaeger-query.test',
+                        "image": '',
+                        "deploy_arguments": [],
+                        "params": {
+                            'tcp_ports': [16686],
+                        },
+                        "meta": {
+                            'service_name': 'jaeger-query',
+                            'ports': [16686],
+                            'ip': None,
+                            'deployed_by': [],
+                            'rank': None,
+                            'rank_generation': None,
+                            'extra_container_args': None,
+                            'extra_entrypoint_args': None,
+                        },
+                        "config_blobs": config,
+                    }),
                 )
 
     @patch("cephadm.serve.CephadmServe._run_cephadm")
@@ -1685,37 +2261,57 @@ class TestJaeger:
                 "elasticsearch_nodes": f'http://{build_url(host=cephadm_module.inventory.get_addr("test"), port=9200).lstrip("/")}'}
             with with_service(cephadm_module, es_spec):
                 _run_cephadm.assert_called_with(
-                    'test',
-                    'elasticsearch.test',
-                    'deploy',
-                    [
-                        '--name', 'elasticsearch.test',
-                        '--meta-json',
-                        ('{"service_name": "elasticsearch", "ports": [9200], "ip": null, "deployed_by": [], "rank": null, '
-                         '"rank_generation": null, "extra_container_args": null, "extra_entrypoint_args": null}'),
-                        '--config-json', '-',
-                        '--tcp-ports', '9200'
-
-                    ],
-                    stdin=json.dumps(es_config),
-                    image=''
+                    "test",
+                    "elasticsearch.test",
+                    ['_orch', 'deploy'],
+                    [],
+                    stdin=json.dumps({
+                        "fsid": "fsid",
+                        "name": 'elasticsearch.test',
+                        "image": '',
+                        "deploy_arguments": [],
+                        "params": {
+                            'tcp_ports': [9200],
+                        },
+                        "meta": {
+                            'service_name': 'elasticsearch',
+                            'ports': [9200],
+                            'ip': None,
+                            'deployed_by': [],
+                            'rank': None,
+                            'rank_generation': None,
+                            'extra_container_args': None,
+                            'extra_entrypoint_args': None,
+                        },
+                        "config_blobs": es_config,
+                    }),
                 )
                 with with_service(cephadm_module, collector_spec):
                     _run_cephadm.assert_called_with(
-                        'test',
-                        'jaeger-collector.test',
-                        'deploy',
-                        [
-                            '--name', 'jaeger-collector.test',
-                            '--meta-json',
-                            ('{"service_name": "jaeger-collector", "ports": [14250], "ip": null, "deployed_by": [], "rank": null, '
-                             '"rank_generation": null, "extra_container_args": null, "extra_entrypoint_args": null}'),
-                            '--config-json', '-',
-                            '--tcp-ports', '14250'
-
-                        ],
-                        stdin=json.dumps(collector_config),
-                        image=''
+                        "test",
+                        "jaeger-collector.test",
+                        ['_orch', 'deploy'],
+                        [],
+                        stdin=json.dumps({
+                            "fsid": "fsid",
+                            "name": 'jaeger-collector.test',
+                            "image": '',
+                            "deploy_arguments": [],
+                            "params": {
+                                'tcp_ports': [14250],
+                            },
+                            "meta": {
+                                'service_name': 'jaeger-collector',
+                                'ports': [14250],
+                                'ip': None,
+                                'deployed_by': [],
+                                'rank': None,
+                                'rank_generation': None,
+                                'extra_container_args': None,
+                                'extra_entrypoint_args': None,
+                            },
+                            "config_blobs": collector_config,
+                        }),
                     )
 
     @patch("cephadm.serve.CephadmServe._run_cephadm")
@@ -1731,35 +2327,55 @@ class TestJaeger:
         with with_host(cephadm_module, 'test'):
             with with_service(cephadm_module, collector_spec):
                 _run_cephadm.assert_called_with(
-                    'test',
-                    'jaeger-collector.test',
-                    'deploy',
-                    [
-                        '--name', 'jaeger-collector.test',
-                        '--meta-json',
-                        ('{"service_name": "jaeger-collector", "ports": [14250], "ip": null, "deployed_by": [], "rank": null, '
-                         '"rank_generation": null, "extra_container_args": null, "extra_entrypoint_args": null}'),
-                        '--config-json', '-',
-                        '--tcp-ports', '14250'
-
-                    ],
-                    stdin=json.dumps(collector_config),
-                    image=''
+                    "test",
+                    "jaeger-collector.test",
+                    ['_orch', 'deploy'],
+                    [],
+                    stdin=json.dumps({
+                        "fsid": "fsid",
+                        "name": 'jaeger-collector.test',
+                        "image": '',
+                        "deploy_arguments": [],
+                        "params": {
+                            'tcp_ports': [14250],
+                        },
+                        "meta": {
+                            'service_name': 'jaeger-collector',
+                            'ports': [14250],
+                            'ip': None,
+                            'deployed_by': [],
+                            'rank': None,
+                            'rank_generation': None,
+                            'extra_container_args': None,
+                            'extra_entrypoint_args': None,
+                        },
+                        "config_blobs": collector_config,
+                    }),
                 )
                 with with_service(cephadm_module, agent_spec):
                     _run_cephadm.assert_called_with(
-                        'test',
-                        'jaeger-agent.test',
-                        'deploy',
-                        [
-                            '--name', 'jaeger-agent.test',
-                            '--meta-json',
-                            ('{"service_name": "jaeger-agent", "ports": [6799], "ip": null, "deployed_by": [], "rank": null, '
-                             '"rank_generation": null, "extra_container_args": null, "extra_entrypoint_args": null}'),
-                            '--config-json', '-',
-                            '--tcp-ports', '6799'
-
-                        ],
-                        stdin=json.dumps(agent_config),
-                        image=''
+                        "test",
+                        "jaeger-agent.test",
+                        ['_orch', 'deploy'],
+                        [],
+                        stdin=json.dumps({
+                            "fsid": "fsid",
+                            "name": 'jaeger-agent.test',
+                            "image": '',
+                            "deploy_arguments": [],
+                            "params": {
+                                'tcp_ports': [6799],
+                            },
+                            "meta": {
+                                'service_name': 'jaeger-agent',
+                                'ports': [6799],
+                                'ip': None,
+                                'deployed_by': [],
+                                'rank': None,
+                                'rank_generation': None,
+                                'extra_container_args': None,
+                                'extra_entrypoint_args': None,
+                            },
+                            "config_blobs": agent_config,
+                        }),
                     )

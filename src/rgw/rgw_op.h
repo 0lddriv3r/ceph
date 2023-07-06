@@ -353,11 +353,13 @@ protected:
   bool range_parsed;
   bool skip_manifest;
   bool skip_decrypt{false};
+  bool sync_cloudtiered{false};
   utime_t gc_invalidate_time;
   bool is_slo;
   std::string lo_etag;
   bool rgwx_stat; /* extended rgw stat operation */
   std::string version_id;
+  rgw_zone_set_entry dst_zone_trace;
 
   // compression attrs
   RGWCompressionInfo cs_info;

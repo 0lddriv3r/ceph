@@ -25,8 +25,9 @@ struct obj_version;
 int rgw_init_ioctx(const DoutPrefixProvider *dpp,
                    librados::Rados *rados, const rgw_pool& pool,
                    librados::IoCtx& ioctx,
-		   bool create = false,
-		   bool mostly_omap = false);
+                   bool create = false,
+                   bool mostly_omap = false,
+                   bool bulk = false);
 
 #define RGW_NO_SHARD -1
 
@@ -95,10 +96,10 @@ extern thread_local bool is_asio_thread;
 /// perform the rados operation, using the yield context when given
 int rgw_rados_operate(const DoutPrefixProvider *dpp, librados::IoCtx& ioctx, const std::string& oid,
                       librados::ObjectReadOperation *op, bufferlist* pbl,
-                      optional_yield y, int flags = 0, const jspan_context* trace_info = nullptr);
+                      optional_yield y, int flags = 0);
 int rgw_rados_operate(const DoutPrefixProvider *dpp, librados::IoCtx& ioctx, const std::string& oid,
                       librados::ObjectWriteOperation *op, optional_yield y,
-		      int flags = 0, const jspan_context* trace_info = nullptr);
+		      int flags = 0);
 int rgw_rados_notify(const DoutPrefixProvider *dpp, librados::IoCtx& ioctx, const std::string& oid,
                      bufferlist& bl, uint64_t timeout_ms, bufferlist* pbl,
                      optional_yield y);

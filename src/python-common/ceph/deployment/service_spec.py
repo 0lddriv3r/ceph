@@ -510,6 +510,7 @@ class ServiceSpec(object):
         from ceph.deployment.drive_group import DriveGroupSpec
 
         ret = {
+            'mon': MONSpec,
             'rgw': RGWSpec,
             'nfs': NFSServiceSpec,
             'osd': DriveGroupSpec,
@@ -639,7 +640,7 @@ class ServiceSpec(object):
         understanding of what fields are special for a give service type.
 
         Note, we'll need to stay compatible with both versions for the
-        the next two major releases (octoups, pacific).
+        the next two major releases (octopus, pacific).
 
         :param json_spec: A valid dict with ServiceSpec
 
@@ -809,6 +810,8 @@ class NFSServiceSpec(ServiceSpec):
                  config: Optional[Dict[str, str]] = None,
                  networks: Optional[List[str]] = None,
                  port: Optional[int] = None,
+                 virtual_ip: Optional[str] = None,
+                 enable_haproxy_protocol: bool = False,
                  extra_container_args: Optional[List[str]] = None,
                  extra_entrypoint_args: Optional[List[str]] = None,
                  custom_configs: Optional[List[CustomConfig]] = None,
@@ -821,6 +824,8 @@ class NFSServiceSpec(ServiceSpec):
             extra_entrypoint_args=extra_entrypoint_args, custom_configs=custom_configs)
 
         self.port = port
+        self.virtual_ip = virtual_ip
+        self.enable_haproxy_protocol = enable_haproxy_protocol
 
     def get_port_start(self) -> List[int]:
         if self.port:
@@ -1050,6 +1055,8 @@ class IngressSpec(ServiceSpec):
                  virtual_interface_networks: Optional[List[str]] = [],
                  unmanaged: bool = False,
                  ssl: bool = False,
+                 keepalive_only: bool = False,
+                 enable_haproxy_protocol: bool = False,
                  extra_container_args: Optional[List[str]] = None,
                  extra_entrypoint_args: Optional[List[str]] = None,
                  custom_configs: Optional[List[CustomConfig]] = None,
@@ -1080,10 +1087,16 @@ class IngressSpec(ServiceSpec):
         self.virtual_interface_networks = virtual_interface_networks or []
         self.unmanaged = unmanaged
         self.ssl = ssl
+        self.keepalive_only = keepalive_only
+        self.enable_haproxy_protocol = enable_haproxy_protocol
 
     def get_port_start(self) -> List[int]:
-        return [cast(int, self.frontend_port),
-                cast(int, self.monitor_port)]
+        ports = []
+        if self.frontend_port is not None:
+            ports.append(cast(int, self.frontend_port))
+        if self.monitor_port is not None:
+            ports.append(cast(int, self.monitor_port))
+        return ports
 
     def get_virtual_ip(self) -> Optional[str]:
         return self.virtual_ip
@@ -1094,7 +1107,7 @@ class IngressSpec(ServiceSpec):
         if not self.backend_service:
             raise SpecValidationError(
                 'Cannot add ingress: No backend_service specified')
-        if not self.frontend_port:
+        if not self.keepalive_only and not self.frontend_port:
             raise SpecValidationError(
                 'Cannot add ingress: No frontend_port specified')
         if not self.monitor_port:
@@ -1292,6 +1305,7 @@ class GrafanaSpec(MonitoringSpec):
                  port: Optional[int] = None,
                  protocol: Optional[str] = 'https',
                  initial_admin_password: Optional[str] = None,
+                 anonymous_access: Optional[bool] = True,
                  extra_container_args: Optional[List[str]] = None,
                  extra_entrypoint_args: Optional[List[str]] = None,
                  custom_configs: Optional[List[CustomConfig]] = None,
@@ -1305,12 +1319,19 @@ class GrafanaSpec(MonitoringSpec):
             custom_configs=custom_configs)
 
         self.initial_admin_password = initial_admin_password
+        self.anonymous_access = anonymous_access
         self.protocol = protocol
 
     def validate(self) -> None:
         super(GrafanaSpec, self).validate()
         if self.protocol not in ['http', 'https']:
             err_msg = f"Invalid protocol '{self.protocol}'. Valid values are: 'http', 'https'."
+            raise SpecValidationError(err_msg)
+
+        if not self.anonymous_access and not self.initial_admin_password:
+            err_msg = ('Either initial_admin_password must be set or anonymous_access '
+                       'must be set to true. Otherwise the grafana dashboard will '
+                       'be inaccessible.')
             raise SpecValidationError(err_msg)
 
 
@@ -1548,6 +1569,52 @@ class MDSSpec(ServiceSpec):
 
 
 yaml.add_representer(MDSSpec, ServiceSpec.yaml_representer)
+
+
+class MONSpec(ServiceSpec):
+    def __init__(self,
+                 service_type: str,
+                 service_id: Optional[str] = None,
+                 placement: Optional[PlacementSpec] = None,
+                 count: Optional[int] = None,
+                 config: Optional[Dict[str, str]] = None,
+                 unmanaged: bool = False,
+                 preview_only: bool = False,
+                 networks: Optional[List[str]] = None,
+                 extra_container_args: Optional[List[str]] = None,
+                 custom_configs: Optional[List[CustomConfig]] = None,
+                 crush_locations: Optional[Dict[str, List[str]]] = None,
+                 ):
+        assert service_type == 'mon'
+        super(MONSpec, self).__init__('mon', service_id=service_id,
+                                      placement=placement,
+                                      count=count,
+                                      config=config,
+                                      unmanaged=unmanaged,
+                                      preview_only=preview_only,
+                                      networks=networks,
+                                      extra_container_args=extra_container_args,
+                                      custom_configs=custom_configs)
+
+        self.crush_locations = crush_locations
+        self.validate()
+
+    def validate(self) -> None:
+        if self.crush_locations:
+            for host, crush_locs in self.crush_locations.items():
+                try:
+                    assert_valid_host(host)
+                except SpecValidationError as e:
+                    err_str = f'Invalid hostname found in spec crush locations: {e}'
+                    raise SpecValidationError(err_str)
+                for cloc in crush_locs:
+                    if '=' not in cloc or len(cloc.split('=')) != 2:
+                        err_str = ('Crush locations must be of form <bucket>=<location>. '
+                                   f'Found crush location: {cloc}')
+                        raise SpecValidationError(err_str)
+
+
+yaml.add_representer(MONSpec, ServiceSpec.yaml_representer)
 
 
 class TracingSpec(ServiceSpec):

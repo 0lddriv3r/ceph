@@ -318,6 +318,9 @@ void usage()
   cout << "  script-package add         add a lua package to the scripts allowlist\n";
   cout << "  script-package rm          remove a lua package from the scripts allowlist\n";
   cout << "  script-package list        get the lua packages allowlist\n";
+  cout << "  notification list          list bucket notifications configuration\n";
+  cout << "  notification get           get a bucket notifications configuration\n";
+  cout << "  notification rm            remove a bucket notifications configuration\n";
   cout << "options:\n";
   cout << "   --tenant=<tenant>         tenant name\n";
   cout << "   --user_ns=<namespace>     namespace of user (oidc in case of users authenticated with oidc provider)\n";
@@ -483,6 +486,7 @@ void usage()
   cout << "   --totp-pin                the valid value of a TOTP token at a certain time\n";
   cout << "\nBucket notifications options:\n";
   cout << "   --topic                   bucket notifications topic name\n";
+  cout << "   --notification-id         bucket notifications id\n";
   cout << "\nScript options:\n";
   cout << "   --context                 context in which the script runs. one of: "+LUA_CONTEXT_LIST+"\n";
   cout << "   --package                 name of the lua package that should be added/removed to/from the allowlist\n";
@@ -830,9 +834,12 @@ enum class OPT {
   MFA_RESYNC,
   RESHARD_STALE_INSTANCES_LIST,
   RESHARD_STALE_INSTANCES_DELETE,
-  PUBSUB_TOPICS_LIST,
+  PUBSUB_TOPIC_LIST,
   PUBSUB_TOPIC_GET,
   PUBSUB_TOPIC_RM,
+  PUBSUB_NOTIFICATION_LIST,
+  PUBSUB_NOTIFICATION_GET,
+  PUBSUB_NOTIFICATION_RM,
   SCRIPT_PUT,
   SCRIPT_GET,
   SCRIPT_RM,
@@ -1061,9 +1068,12 @@ static SimpleCmd::Commands all_cmds = {
   { "reshard stale list", OPT::RESHARD_STALE_INSTANCES_LIST },
   { "reshard stale-instances delete", OPT::RESHARD_STALE_INSTANCES_DELETE },
   { "reshard stale delete", OPT::RESHARD_STALE_INSTANCES_DELETE },
-  { "topic list", OPT::PUBSUB_TOPICS_LIST },
+  { "topic list", OPT::PUBSUB_TOPIC_LIST },
   { "topic get", OPT::PUBSUB_TOPIC_GET },
   { "topic rm", OPT::PUBSUB_TOPIC_RM },
+  { "notification list", OPT::PUBSUB_NOTIFICATION_LIST },
+  { "notification get", OPT::PUBSUB_NOTIFICATION_GET },
+  { "notification rm", OPT::PUBSUB_NOTIFICATION_RM },
   { "script put", OPT::SCRIPT_PUT },
   { "script get", OPT::SCRIPT_GET },
   { "script rm", OPT::SCRIPT_RM },
@@ -1098,31 +1108,6 @@ log_type get_log_type(const string& type_str) {
     return log_type::omap;
 
   return static_cast<log_type>(0xff);
-}
-
-void dump_bi_entry(bufferlist& bl, BIIndexType index_type, Formatter *formatter)
-{
-  auto iter = bl.cbegin();
-  switch (index_type) {
-    case BIIndexType::Plain:
-    case BIIndexType::Instance:
-      {
-        rgw_bucket_dir_entry entry;
-        decode(entry, iter);
-        encode_json("entry", entry, formatter);
-      }
-      break;
-    case BIIndexType::OLH:
-      {
-        rgw_bucket_olh_entry entry;
-        decode(entry, iter);
-        encode_json("entry", entry, formatter);
-      }
-      break;
-    default:
-      ceph_abort();
-      break;
-  }
 }
 
 static void show_user_info(RGWUserInfo& info, Formatter *formatter)
@@ -1419,7 +1404,7 @@ int set_bucket_quota(rgw::sal::Driver* driver, OPT opt_cmd,
 
   set_quota_info(bucket->get_info().quota, opt_cmd, max_size, max_objects, have_max_size, have_max_objects);
 
-  r = bucket->put_info(dpp(), false, real_time());
+  r = bucket->put_info(dpp(), false, real_time(), null_yield);
   if (r < 0) {
     cerr << "ERROR: failed writing bucket instance info: " << cpp_strerror(-r) << std::endl;
     return -r;
@@ -1666,7 +1651,7 @@ int check_obj_locator_underscore(rgw::sal::Object* obj, bool fix, bool remove_ba
   string status = (needs_fixing ? "needs_fixing" : "ok");
 
   if ((needs_fixing || remove_bad) && fix) {
-    ret = static_cast<rgw::sal::RadosStore*>(driver)->getRados()->fix_head_obj_locator(dpp(), obj->get_bucket()->get_info(), needs_fixing, remove_bad, obj->get_key());
+    ret = static_cast<rgw::sal::RadosStore*>(driver)->getRados()->fix_head_obj_locator(dpp(), obj->get_bucket()->get_info(), needs_fixing, remove_bad, obj->get_key(), null_yield);
     if (ret < 0) {
       cerr << "ERROR: fix_head_object_locator() returned ret=" << ret << std::endl;
       goto done;
@@ -2509,7 +2494,7 @@ static int bucket_source_sync_status(const DoutPrefixProvider *dpp, rgw::sal::Ra
   out << indented{width, "source zone"} << source.id << " (" << source.name << ")" << std::endl;
 
   // syncing from this zone?
-  if (!zone.syncs_from(source.name)) {
+  if (!driver->svc()->zone->zone_syncs_from(zone, source)) {
     out << indented{width} << "does not sync from zone\n";
     return 0;
   }
@@ -3036,6 +3021,9 @@ static int scan_totp(CephContext *cct, ceph::real_time& now, rados::cls::otp::ot
                              nullptr,
                              pins[0].c_str());
     if (rc != OATH_INVALID_OTP) {
+      // oath_totp_validate2 is an external library function, cannot fix internally
+      // Further, step_size is a small number and unlikely to overflow
+      // coverity[store_truncates_time_t:SUPPRESS]
       rc = oath_totp_validate2(totp.seed_bin.c_str(), totp.seed_bin.length(),
                                start_time, 
                                step_size,
@@ -3195,7 +3183,7 @@ public:
       return 0;
     }
 
-    int ret = bucket->put_info(dpp(), false, real_time());
+    int ret = bucket->put_info(dpp(), false, real_time(), null_yield);
     if (ret < 0) {
       cerr << "failed to driver bucket info: " << cpp_strerror(-ret) << std::endl;
       return -ret;
@@ -3488,6 +3476,7 @@ int main(int argc, const char **argv)
   int trim_delay_ms = 0;
 
   string topic_name;
+  string notification_id;
   string sub_name;
   string event_id;
 
@@ -3961,6 +3950,8 @@ int main(int argc, const char **argv)
       trim_delay_ms = atoi(val.c_str());
     } else if (ceph_argparse_witharg(args, i, &val, "--topic", (char*)NULL)) {
       topic_name = val;
+    } else if (ceph_argparse_witharg(args, i, &val, "--notification-id", (char*)NULL)) {
+      notification_id = val;
     } else if (ceph_argparse_witharg(args, i, &val, "--subscription", (char*)NULL)) {
       sub_name = val;
     } else if (ceph_argparse_witharg(args, i, &val, "--event-id", (char*)NULL)) {
@@ -4203,8 +4194,10 @@ int main(int argc, const char **argv)
 			 OPT::ROLE_POLICY_GET,
 			 OPT::RESHARD_LIST,
 			 OPT::RESHARD_STATUS,
-			 OPT::PUBSUB_TOPICS_LIST,
+			 OPT::PUBSUB_TOPIC_LIST,
+       OPT::PUBSUB_NOTIFICATION_LIST,
 			 OPT::PUBSUB_TOPIC_GET,
+       OPT::PUBSUB_NOTIFICATION_GET,
 			 OPT::SCRIPT_GET,
     };
 
@@ -4251,6 +4244,7 @@ int main(int argc, const char **argv)
 					false,
 					false,
                                         false,
+                                        null_yield,
 					need_cache && g_conf()->rgw_cache_enabled,
 					need_gc);
     }
@@ -4285,9 +4279,12 @@ int main(int argc, const char **argv)
                           && opt_cmd != OPT::RESHARD_ADD
                           && opt_cmd != OPT::RESHARD_CANCEL
                           && opt_cmd != OPT::RESHARD_STATUS
-                          && opt_cmd != OPT::PUBSUB_TOPICS_LIST
+                          && opt_cmd != OPT::PUBSUB_TOPIC_LIST
+                          && opt_cmd != OPT::PUBSUB_NOTIFICATION_LIST
                           && opt_cmd != OPT::PUBSUB_TOPIC_GET
-                          && opt_cmd != OPT::PUBSUB_TOPIC_RM) {
+                          && opt_cmd != OPT::PUBSUB_NOTIFICATION_GET
+                          && opt_cmd != OPT::PUBSUB_TOPIC_RM
+                          && opt_cmd != OPT::PUBSUB_NOTIFICATION_RM) {
         cerr << "ERROR: --tenant is set, but there's no user ID" << std::endl;
         return EINVAL;
       }
@@ -6903,13 +6900,13 @@ int main(int argc, const char **argv)
 
   if (opt_cmd == OPT::POLICY) {
     if (format == "xml") {
-      int ret = RGWBucketAdminOp::dump_s3_policy(driver, bucket_op, cout, dpp());
+      int ret = RGWBucketAdminOp::dump_s3_policy(driver, bucket_op, cout, dpp(), null_yield);
       if (ret < 0) {
         cerr << "ERROR: failed to get policy: " << cpp_strerror(-ret) << std::endl;
         return -ret;
       }
     } else {
-      int ret = RGWBucketAdminOp::get_policy(driver, bucket_op, stream_flusher, dpp());
+      int ret = RGWBucketAdminOp::get_policy(driver, bucket_op, stream_flusher, dpp(), null_yield);
       if (ret < 0) {
         cerr << "ERROR: failed to get policy: " << cpp_strerror(-ret) << std::endl;
         return -ret;
@@ -7099,7 +7096,7 @@ int main(int argc, const char **argv)
     bucket_op.set_bucket_id(bucket_id);
     bucket_op.set_new_bucket_name(new_bucket_name);
     string err;
-    int r = RGWBucketAdminOp::link(driver, bucket_op, dpp(), &err);
+    int r = RGWBucketAdminOp::link(driver, bucket_op, dpp(), null_yield, &err);
     if (r < 0) {
       cerr << "failure: " << cpp_strerror(-r) << ": " << err << std::endl;
       return -r;
@@ -7107,7 +7104,7 @@ int main(int argc, const char **argv)
   }
 
   if (opt_cmd == OPT::BUCKET_UNLINK) {
-    int r = RGWBucketAdminOp::unlink(driver, bucket_op, dpp());
+    int r = RGWBucketAdminOp::unlink(driver, bucket_op, dpp(), null_yield);
     if (r < 0) {
       cerr << "failure: " << cpp_strerror(-r) << std::endl;
       return -r;
@@ -7182,7 +7179,7 @@ int main(int argc, const char **argv)
     bucket_op.set_new_bucket_name(new_bucket_name);
     string err;
 
-    int r = RGWBucketAdminOp::chown(driver, bucket_op, marker, dpp(), &err);
+    int r = RGWBucketAdminOp::chown(driver, bucket_op, marker, dpp(), null_yield, &err);
     if (r < 0) {
       cerr << "failure: " << cpp_strerror(-r) << ": " << err << std::endl;
       return -r;
@@ -7437,7 +7434,7 @@ next:
 	return -ret;
       }
     }
-    ret = RGWUsage::trim(dpp(), driver, user.get(), bucket.get(), start_epoch, end_epoch);
+    ret = RGWUsage::trim(dpp(), driver, user.get(), bucket.get(), start_epoch, end_epoch, null_yield);
     if (ret < 0) {
       cerr << "ERROR: read_usage() returned ret=" << ret << std::endl;
       return 1;
@@ -7451,7 +7448,7 @@ next:
       return 1;
     }
 
-    ret = RGWUsage::clear(dpp(), driver);
+    ret = RGWUsage::clear(dpp(), driver, null_yield);
     if (ret < 0) {
       return ret;
     }
@@ -7477,7 +7474,7 @@ next:
     }
     RGWOLHInfo olh;
     rgw_obj obj(bucket->get_key(), object);
-    ret = static_cast<rgw::sal::RadosStore*>(driver)->getRados()->get_olh(dpp(), bucket->get_info(), obj, &olh);
+    ret = static_cast<rgw::sal::RadosStore*>(driver)->getRados()->get_olh(dpp(), bucket->get_info(), obj, &olh, null_yield);
     if (ret < 0) {
       cerr << "ERROR: failed reading olh: " << cpp_strerror(-ret) << std::endl;
       return -ret;
@@ -7504,7 +7501,7 @@ next:
       return -ret;
     }
 
-    ret = static_cast<rgw::sal::RadosStore*>(driver)->getRados()->bucket_index_read_olh_log(dpp(), bucket->get_info(), *state, obj->get_obj(), 0, &log, &is_truncated);
+    ret = static_cast<rgw::sal::RadosStore*>(driver)->getRados()->bucket_index_read_olh_log(dpp(), bucket->get_info(), *state, obj->get_obj(), 0, &log, &is_truncated, null_yield);
     if (ret < 0) {
       cerr << "ERROR: failed reading olh: " << cpp_strerror(-ret) << std::endl;
       return -ret;
@@ -7536,7 +7533,7 @@ next:
     }
 
     rgw_cls_bi_entry entry;
-    ret = static_cast<rgw::sal::RadosStore*>(driver)->getRados()->bi_get(dpp(), bucket->get_info(), obj, bi_index_type, &entry);
+    ret = static_cast<rgw::sal::RadosStore*>(driver)->getRados()->bi_get(dpp(), bucket->get_info(), obj, bi_index_type, &entry, null_yield);
     if (ret < 0) {
       cerr << "ERROR: bi_get(): " << cpp_strerror(-ret) << std::endl;
       return -ret;
@@ -7566,7 +7563,7 @@ next:
 
     rgw_obj obj(bucket->get_key(), key);
 
-    ret = static_cast<rgw::sal::RadosStore*>(driver)->getRados()->bi_put(dpp(), bucket->get_key(), obj, entry);
+    ret = static_cast<rgw::sal::RadosStore*>(driver)->getRados()->bi_put(dpp(), bucket->get_key(), obj, entry, null_yield);
     if (ret < 0) {
       cerr << "ERROR: bi_put(): " << cpp_strerror(-ret) << std::endl;
       return -ret;
@@ -7603,7 +7600,7 @@ next:
       ldpp_dout(dpp(), 20) << "INFO: " << __func__ << ": starting shard=" << i << dendl;
 
       RGWRados::BucketShard bs(static_cast<rgw::sal::RadosStore*>(driver)->getRados());
-      int ret = bs.init(dpp(), bucket->get_info(), index, i);
+      int ret = bs.init(dpp(), bucket->get_info(), index, i, null_yield);
       marker.clear();
 
       if (ret < 0) {
@@ -7614,7 +7611,7 @@ next:
       do {
         entries.clear();
 	// if object is specified, we use that as a filter to only retrieve some some entries
-        ret = static_cast<rgw::sal::RadosStore*>(driver)->getRados()->bi_list(bs, object, marker, max_entries, &entries, &is_truncated);
+        ret = static_cast<rgw::sal::RadosStore*>(driver)->getRados()->bi_list(bs, object, marker, max_entries, &entries, &is_truncated, null_yield);
         if (ret < 0) {
           cerr << "ERROR: bi_list(): " << cpp_strerror(-ret) << std::endl;
           return -ret;
@@ -7677,7 +7674,7 @@ next:
     const int max_shards = rgw::num_shards(index);
     for (int i = 0; i < max_shards; i++) {
       RGWRados::BucketShard bs(static_cast<rgw::sal::RadosStore*>(driver)->getRados());
-      int ret = bs.init(dpp(), bucket->get_info(), index, i);
+      int ret = bs.init(dpp(), bucket->get_info(), index, i, null_yield);
       if (ret < 0) {
         cerr << "ERROR: bs.init(bucket=" << bucket << ", shard=" << i << "): " << cpp_strerror(-ret) << std::endl;
         return -ret;
@@ -7739,7 +7736,7 @@ next:
       return -ret;
     }
     rgw_obj_key key(object, object_version);
-    ret = rgw_remove_object(dpp(), driver, bucket.get(), key);
+    ret = rgw_remove_object(dpp(), driver, bucket.get(), key, null_yield);
 
     if (ret < 0) {
       cerr << "ERROR: object remove returned: " << cpp_strerror(-ret) << std::endl;
@@ -7859,14 +7856,14 @@ next:
   } // OPT::OBJECT_REINDEX
 
   if (opt_cmd == OPT::OBJECTS_EXPIRE) {
-    if (!static_cast<rgw::sal::RadosStore*>(driver)->getRados()->process_expire_objects(dpp())) {
+    if (!static_cast<rgw::sal::RadosStore*>(driver)->getRados()->process_expire_objects(dpp(), null_yield)) {
       cerr << "ERROR: process_expire_objects() processing returned error." << std::endl;
       return 1;
     }
   }
 
   if (opt_cmd == OPT::OBJECTS_EXPIRE_STALE_LIST) {
-    ret = RGWBucketAdminOp::fix_obj_expiry(driver, bucket_op, stream_flusher, dpp(), true);
+    ret = RGWBucketAdminOp::fix_obj_expiry(driver, bucket_op, stream_flusher, dpp(), null_yield, true);
     if (ret < 0) {
       cerr << "ERROR: listing returned " << cpp_strerror(-ret) << std::endl;
       return -ret;
@@ -7874,7 +7871,7 @@ next:
   }
 
   if (opt_cmd == OPT::OBJECTS_EXPIRE_STALE_RM) {
-    ret = RGWBucketAdminOp::fix_obj_expiry(driver, bucket_op, stream_flusher, dpp(), false);
+    ret = RGWBucketAdminOp::fix_obj_expiry(driver, bucket_op, stream_flusher, dpp(), null_yield, false);
     if (ret < 0) {
       cerr << "ERROR: removing returned " << cpp_strerror(-ret) << std::endl;
       return -ret;
@@ -8044,7 +8041,7 @@ next:
     } else if (inject_abort_at) {
       fault.inject(*inject_abort_at, InjectAbort{});
     }
-    ret = br.execute(num_shards, fault, max_entries, dpp(),
+    ret = br.execute(num_shards, fault, max_entries, dpp(), null_yield,
                      verbose, &cout, formatter.get());
     return -ret;
   }
@@ -8073,7 +8070,7 @@ next:
     entry.old_num_shards = num_source_shards;
     entry.new_num_shards = num_shards;
 
-    return reshard.add(dpp(), entry);
+    return reshard.add(dpp(), entry, null_yield);
   }
 
   if (opt_cmd == OPT::RESHARD_LIST) {
@@ -8149,7 +8146,7 @@ next:
   if (opt_cmd == OPT::RESHARD_PROCESS) {
     RGWReshard reshard(static_cast<rgw::sal::RadosStore*>(driver), true, &cout);
 
-    int ret = reshard.process_all_logshards(dpp());
+    int ret = reshard.process_all_logshards(dpp(), null_yield);
     if (ret < 0) {
       cerr << "ERROR: failed to process reshard logs, error=" << cpp_strerror(-ret) << std::endl;
       return -ret;
@@ -8182,7 +8179,7 @@ next:
 	RGWBucketReshard br(static_cast<rgw::sal::RadosStore*>(driver),
 			    bucket->get_info(), bucket->get_attrs(),
 			    nullptr /* no callback */);
-      int ret = br.cancel(dpp());
+      int ret = br.cancel(dpp(), null_yield);
       if (ret < 0) {
         if (ret == -EBUSY) {
           cerr << "There is ongoing resharding, please retry after " <<
@@ -8206,7 +8203,7 @@ next:
     entry.tenant = tenant;
     entry.bucket_name = bucket_name;
 
-    ret = reshard.remove(dpp(), entry);
+    ret = reshard.remove(dpp(), entry, null_yield);
     if (ret == -ENOENT) {
       if (!resharding_underway) {
 	cerr << "Error, bucket \"" << bucket_name <<
@@ -8371,7 +8368,7 @@ next:
     }
     RGWRados* store = rados_store->getRados();
 
-    int ret = store->process_gc(!include_all);
+    int ret = store->process_gc(!include_all, null_yield);
     if (ret < 0) {
       cerr << "ERROR: gc processing returned error: " << cpp_strerror(-ret) << std::endl;
       return 1;
@@ -8468,7 +8465,7 @@ next:
   }
 
   if (opt_cmd == OPT::LC_RESHARD_FIX) {
-    ret = RGWBucketAdminOp::fix_lc_shards(driver, bucket_op, stream_flusher, dpp());
+    ret = RGWBucketAdminOp::fix_lc_shards(driver, bucket_op, stream_flusher, dpp(), null_yield);
     if (ret < 0) {
       cerr << "ERROR: fixing lc shards: " << cpp_strerror(-ret) << std::endl;
     }
@@ -9214,7 +9211,7 @@ next:
     }
     bucket_op.set_tenant(tenant);
     string err_msg;
-    ret = RGWBucketAdminOp::sync_bucket(driver, bucket_op, dpp(), &err_msg);
+    ret = RGWBucketAdminOp::sync_bucket(driver, bucket_op, dpp(), null_yield, &err_msg);
     if (ret < 0) {
       cerr << err_msg << std::endl;
       return -ret;
@@ -10371,6 +10368,8 @@ next:
       return -ret;
     }
 
+    // time offset is a small number and unlikely to overflow
+    // coverity[store_truncates_time_t:SUPPRESS]
     config.time_ofs = time_ofs;
 
     /* now update the backend */
@@ -10398,7 +10397,7 @@ next:
      return EINVAL;
    }
 
-   ret = RGWBucketAdminOp::list_stale_instances(driver, bucket_op, stream_flusher, dpp());
+   ret = RGWBucketAdminOp::list_stale_instances(driver, bucket_op, stream_flusher, dpp(), null_yield);
    if (ret < 0) {
      cerr << "ERROR: listing stale instances" << cpp_strerror(-ret) << std::endl;
    }
@@ -10410,40 +10409,47 @@ next:
      return EINVAL;
    }
 
-   ret = RGWBucketAdminOp::clear_stale_instances(driver, bucket_op, stream_flusher, dpp());
+   ret = RGWBucketAdminOp::clear_stale_instances(driver, bucket_op, stream_flusher, dpp(), null_yield);
    if (ret < 0) {
      cerr << "ERROR: deleting stale instances" << cpp_strerror(-ret) << std::endl;
    }
  }
 
-  if (opt_cmd == OPT::PUBSUB_TOPICS_LIST) {
+  if (opt_cmd == OPT::PUBSUB_NOTIFICATION_LIST) {
+    if (bucket_name.empty()) {
+      cerr << "ERROR: bucket name was not provided (via --bucket)" << std::endl;
+      return EINVAL;
+    }
 
     RGWPubSub ps(driver, tenant);
 
-    if (!bucket_name.empty()) {
-      rgw_pubsub_bucket_topics result;
-      int ret = init_bucket(user.get(), tenant, bucket_name, bucket_id, &bucket);
-      if (ret < 0) {
-        cerr << "ERROR: could not init bucket: " << cpp_strerror(-ret) << std::endl;
-        return -ret;
-      }
-
-      const RGWPubSub::Bucket b(ps, bucket.get());
-      ret = b.get_topics(dpp(), result, null_yield);
-      if (ret < 0 && ret != -ENOENT) {
-        cerr << "ERROR: could not get topics: " << cpp_strerror(-ret) << std::endl;
-        return -ret;
-      }
-      encode_json("result", result, formatter.get());
-    } else {
-      rgw_pubsub_topics result;
-      int ret = ps.get_topics(dpp(), result, null_yield);
-      if (ret < 0 && ret != -ENOENT) {
-        cerr << "ERROR: could not get topics: " << cpp_strerror(-ret) << std::endl;
-        return -ret;
-      }
-      encode_json("result", result, formatter.get());
+    rgw_pubsub_bucket_topics result;
+    int ret = init_bucket(user.get(), tenant, bucket_name, bucket_id, &bucket);
+    if (ret < 0) {
+      cerr << "ERROR: could not init bucket: " << cpp_strerror(-ret) << std::endl;
+      return -ret;
     }
+
+    const RGWPubSub::Bucket b(ps, bucket.get());
+    ret = b.get_topics(dpp(), result, null_yield);
+    if (ret < 0 && ret != -ENOENT) {
+      cerr << "ERROR: could not get topics: " << cpp_strerror(-ret) << std::endl;
+      return -ret;
+    }
+    encode_json("result", result, formatter.get());
+    formatter->flush(cout);
+  }
+
+  if (opt_cmd == OPT::PUBSUB_TOPIC_LIST) {
+    RGWPubSub ps(driver, tenant);
+
+    rgw_pubsub_topics result;
+    int ret = ps.get_topics(dpp(), result, null_yield);
+    if (ret < 0 && ret != -ENOENT) {
+      cerr << "ERROR: could not get topics: " << cpp_strerror(-ret) << std::endl;
+      return -ret;
+    }
+    encode_json("result", result, formatter.get());
     formatter->flush(cout);
   }
 
@@ -10465,10 +10471,52 @@ next:
     formatter->flush(cout);
   }
 
+  if (opt_cmd == OPT::PUBSUB_NOTIFICATION_GET) {
+    if (notification_id.empty()) {
+      cerr << "ERROR: notification-id was not provided (via --notification-id)" << std::endl;
+      return EINVAL;
+    }
+    if (bucket_name.empty()) {
+      cerr << "ERROR: bucket name was not provided (via --bucket)" << std::endl;
+      return EINVAL;
+    }
+
+    int ret = init_bucket(user.get(), tenant, bucket_name, bucket_id, &bucket);
+    if (ret < 0) {
+      cerr << "ERROR: could not init bucket: " << cpp_strerror(-ret) << std::endl;
+      return -ret;
+    }
+
+    RGWPubSub ps(driver, tenant);
+
+    rgw_pubsub_bucket_topics bucket_topics;
+    const RGWPubSub::Bucket b(ps, bucket.get());
+    ret = b.get_topics(dpp(), bucket_topics, null_yield);
+    if (ret < 0 && ret != -ENOENT) {
+      cerr << "ERROR: could not get bucket notifications: " << cpp_strerror(-ret) << std::endl;
+      return -ret;
+    }
+
+    rgw_pubsub_topic_filter bucket_topic;
+    ret = b.get_notification_by_id(dpp(), notification_id, bucket_topic, null_yield);
+    if (ret < 0) {
+      cerr << "ERROR: could not get notification: " << cpp_strerror(-ret) << std::endl;
+      return -ret;
+    }
+    encode_json("notification", bucket_topic, formatter.get());
+    formatter->flush(cout);
+  }
+
   if (opt_cmd == OPT::PUBSUB_TOPIC_RM) {
     if (topic_name.empty()) {
       cerr << "ERROR: topic name was not provided (via --topic)" << std::endl;
       return EINVAL;
+    }
+
+    ret = rgw::notify::remove_persistent_topic(dpp(), static_cast<rgw::sal::RadosStore*>(driver)->getRados()->get_notif_pool_ctx(), topic_name, null_yield);
+    if (ret < 0) {
+      cerr << "ERROR: could not remove persistent topic: " << cpp_strerror(-ret) << std::endl;
+      return -ret;
     }
 
     RGWPubSub ps(driver, tenant);
@@ -10477,6 +10525,36 @@ next:
     if (ret < 0) {
       cerr << "ERROR: could not remove topic: " << cpp_strerror(-ret) << std::endl;
       return -ret;
+    }
+  }
+
+  if (opt_cmd == OPT::PUBSUB_NOTIFICATION_RM) {
+    if (bucket_name.empty()) {
+      cerr << "ERROR: bucket name was not provided (via --bucket)" << std::endl;
+      return EINVAL;
+    }
+
+    int ret = init_bucket(user.get(), tenant, bucket_name, bucket_id, &bucket);
+    if (ret < 0) {
+      cerr << "ERROR: could not init bucket: " << cpp_strerror(-ret) << std::endl;
+      return -ret;
+    }
+
+    RGWPubSub ps(driver, tenant);
+
+    rgw_pubsub_bucket_topics bucket_topics;
+    const RGWPubSub::Bucket b(ps, bucket.get());
+    ret = b.get_topics(dpp(), bucket_topics, null_yield);
+    if (ret < 0 && ret != -ENOENT) {
+      cerr << "ERROR: could not get bucket notifications: " << cpp_strerror(-ret) << std::endl;
+      return -ret;
+    }
+
+    rgw_pubsub_topic_filter bucket_topic;
+    if(notification_id.empty()) {
+      ret = b.remove_notifications(dpp(), null_yield);
+    } else {
+      ret = b.remove_notification_by_id(dpp(), notification_id, null_yield);
     }
   }
 

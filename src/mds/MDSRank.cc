@@ -743,6 +743,7 @@ void MDSRankDispatcher::tick()
 
   // ...
   if (is_clientreplay() || is_active() || is_stopping()) {
+    server->clear_laggy_clients();
     server->find_idle_sessions();
     server->evict_cap_revoke_non_responders();
     locker->tick();
@@ -1178,6 +1179,7 @@ bool MDSRank::is_valid_message(const cref_t<Message> &m) {
       type == CEPH_MSG_CLIENT_RECONNECT ||
       type == CEPH_MSG_CLIENT_RECLAIM ||
       type == CEPH_MSG_CLIENT_REQUEST ||
+      type == CEPH_MSG_CLIENT_REPLY ||
       type == MSG_MDS_PEER_REQUEST ||
       type == MSG_MDS_HEARTBEAT ||
       type == MSG_MDS_TABLE_REQUEST ||
@@ -1231,6 +1233,7 @@ void MDSRank::handle_message(const cref_t<Message> &m)
       ALLOW_MESSAGES_FROM(CEPH_ENTITY_TYPE_CLIENT);
       // fall-thru
     case CEPH_MSG_CLIENT_REQUEST:
+    case CEPH_MSG_CLIENT_REPLY:
       server->dispatch(m);
       break;
     case MSG_MDS_PEER_REQUEST:

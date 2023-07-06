@@ -31,6 +31,9 @@
 #include "rgw_sal_dbstore.h"
 #include "driver/dbstore/config/store.h"
 #endif
+#ifdef WITH_RADOSGW_D4N
+#include "driver/d4n/rgw_sal_d4n.h" 
+#endif
 
 #ifdef WITH_RADOSGW_MOTR
 #include "rgw_sal_motr.h"
@@ -54,7 +57,9 @@ extern rgw::sal::Driver* newMotrStore(CephContext *cct);
 extern rgw::sal::Driver* newDaosStore(CephContext *cct);
 #endif
 extern rgw::sal::Driver* newBaseFilter(rgw::sal::Driver* next);
-
+#ifdef WITH_RADOSGW_D4N
+extern rgw::sal::Driver* newD4NFilter(rgw::sal::Driver* next);
+#endif
 }
 
 RGWObjState::RGWObjState() {
@@ -102,7 +107,7 @@ rgw::sal::Driver* DriverManager::init_storage_provider(const DoutPrefixProvider*
 						     bool run_reshard_thread,
                                                      bool run_notification_thread,
 						     bool use_cache,
-						     bool use_gc)
+						     bool use_gc, optional_yield y)
 {
   rgw::sal::Driver* driver{nullptr};
 
@@ -127,7 +132,7 @@ rgw::sal::Driver* DriverManager::init_storage_provider(const DoutPrefixProvider*
       delete driver;
       return nullptr;
     }
-    if (rados->init_complete(dpp) < 0) {
+    if (rados->init_complete(dpp, y) < 0) {
       delete driver;
       return nullptr;
     }
@@ -154,7 +159,7 @@ rgw::sal::Driver* DriverManager::init_storage_provider(const DoutPrefixProvider*
       delete driver;
       return nullptr;
     }
-    if (rados->init_complete(dpp) < 0) {
+    if (rados->init_complete(dpp, y) < 0) {
       delete driver;
       return nullptr;
     }
@@ -222,7 +227,19 @@ rgw::sal::Driver* DriverManager::init_storage_provider(const DoutPrefixProvider*
       delete next;
       return nullptr;
     }
+  } 
+#ifdef WITH_RADOSGW_D4N 
+  else if (cfg.filter_name.compare("d4n") == 0) {
+    rgw::sal::Driver* next = driver;
+    driver = newD4NFilter(next);
+
+    if (driver->initialize(cct, dpp) < 0) {
+      delete driver;
+      delete next;
+      return nullptr;
+    }
   }
+#endif
 
   return driver;
 }
@@ -349,6 +366,11 @@ DriverManager::Config DriverManager::get_config(bool admin, CephContext* cct)
   if (config_filter == "base") {
     cfg.filter_name = "base";
   }
+#ifdef WITH_RADOSGW_D4N
+  else if (config_filter == "d4n") {
+    cfg.filter_name= "d4n";
+  }
+#endif
 
   return cfg;
 }

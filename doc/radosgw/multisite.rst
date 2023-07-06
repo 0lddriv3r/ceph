@@ -1130,7 +1130,7 @@ To view the configuration of a zonegroup, run this command:
 
 .. prompt:: bash #
    
-   dosgw-admin zonegroup get [--rgw-zonegroup=<zonegroup>]
+   radosgw-admin zonegroup get [--rgw-zonegroup=<zonegroup>]
 
 The zonegroup configuration looks like this:
 
@@ -1344,7 +1344,7 @@ Zones
 -----
 
 A zone defines a logical group that consists of one or more Ceph Object Gateway
-instances. Ceph Object Gateway supports zones.
+instances. All RGWs in a given zone serve S3 objects that are backed by RADOS objects that are stored in the same set of pools in the same cluster. Ceph Object Gateway supports zones.
 
 The procedure for configuring zones differs from typical configuration
 procedures, because not all of the settings end up in a Ceph configuration
@@ -1577,19 +1577,28 @@ Supported Features
 +---------------------------+---------+
 | Feature                   | Release |
 +===========================+=========+
-| :ref:`feature_resharding` | Quincy  |
+| :ref:`feature_resharding` | Reef    |
 +---------------------------+---------+
 
 .. _feature_resharding:
 
-resharding
+Resharding
 ~~~~~~~~~~
 
-Allows buckets to be resharded in a multisite configuration without interrupting the replication of their objects. When ``rgw_dynamic_resharding`` is enabled, it runs on each zone independently, and zones may choose different shard counts for the same bucket. When buckets are resharded manually with ``radosgw-admin bucket reshard``, only that zone's bucket is modified. A zone feature should only be marked as supported after all of its radosgws and osds have upgraded.
+This feature allows buckets to be resharded in a multisite configuration
+without interrupting the replication of their objects. When
+``rgw_dynamic_resharding`` is enabled, it runs on each zone independently, and
+zones may choose different shard counts for the same bucket. When buckets are
+resharded manually with ``radosgw-admin bucket reshard``, only that zone's
+bucket is modified. A zone feature should only be marked as supported after all
+of its RGWs and OSDs have upgraded.
+
+.. note:: Dynamic resharding is not supported in multisite deployments prior to
+   the Reef release.
 
 
 Commands
------------------
+--------
 
 Add support for a zone feature
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

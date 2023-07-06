@@ -66,7 +66,7 @@ class DeviceSelection(object):
         self.vendor = vendor
 
         #: Size specification of format LOW:HIGH.
-        #: Can also take the the form :HIGH, LOW:
+        #: Can also take the form :HIGH, LOW:
         #: or an exact value (as ceph-volume inventory reports)
         self.size:  Optional[str] = size
 
@@ -288,8 +288,8 @@ class DriveGroupSpec(ServiceSpec):
         # spec: was not mandatory in octopus
         if 'spec' in args:
             args['spec'].update(cls._drive_group_spec_from_json(s_id, args['spec']))
-        else:
-            args.update(cls._drive_group_spec_from_json(s_id, args))
+        args.update(cls._drive_group_spec_from_json(
+                    s_id, {k: v for k, v in args.items() if k != 'spec'}))
 
         return super(DriveGroupSpec, cls)._from_json_impl(args)
 

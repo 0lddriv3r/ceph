@@ -418,6 +418,8 @@ RGWKMIPManagerImpl::add_request(RGWKMIPTransceiver *req)
   std::unique_lock l{lock};
   if (going_down)
     return -ECANCELED;
+  // requests is a boost::intrusive::list, which manages pointers and does not copy the instance
+  // coverity[leaked_storage:SUPPRESS]
   requests.push_back(*new Request{*req});
   l.unlock();
   if (worker)

@@ -367,6 +367,7 @@ enum {
   CEPH_OSD_RMW_FLAG_SKIP_PROMOTE      = (1 << 9),
   CEPH_OSD_RMW_FLAG_RWORDERED         = (1 << 10),
   CEPH_OSD_RMW_FLAG_RETURNVEC = (1 << 11),
+  CEPH_OSD_RMW_FLAG_READ_DATA  = (1 << 12),
 };
 
 
@@ -6026,6 +6027,11 @@ struct ObjectRecoveryProgress {
       info.copy_subset.empty() ?
       0 : info.copy_subset.range_end())) &&
       omap_complete;
+  }
+
+  uint64_t estimate_remaining_data_to_recover(const ObjectRecoveryInfo& info) const {
+    // Overestimates in case of clones, but avoids traversing copy_subset
+    return info.size - data_recovered_to;
   }
 
   static void generate_test_instances(std::list<ObjectRecoveryProgress*>& o);

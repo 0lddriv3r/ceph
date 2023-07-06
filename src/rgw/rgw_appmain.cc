@@ -43,6 +43,7 @@
 #include "rgw_rest_config.h"
 #include "rgw_rest_realm.h"
 #include "rgw_rest_ratelimit.h"
+#include "rgw_rest_zero.h"
 #include "rgw_swift_auth.h"
 #include "rgw_log.h"
 #include "rgw_lib.h"
@@ -241,7 +242,7 @@ int rgw::AppMain::init_storage()
           run_quota,
           run_sync,
           g_conf().get_val<bool>("rgw_dynamic_resharding"),
-          true, // run notification thread
+          true, null_yield, // run notification thread
           g_conf()->rgw_cache_enabled);
   if (!env.driver) {
     return -EIO;
@@ -348,6 +349,10 @@ void rgw::AppMain::cond_init_apis()
       /* Register driver-specific admin APIs */
       env.driver->register_admin_apis(admin_resource);
       rest.register_resource(g_conf()->rgw_admin_entry, admin_resource);
+    }
+
+    if (apis_map.count("zero")) {
+      rest.register_resource("zero", new rgw::RESTMgr_Zero());
     }
   } /* have_http_frontend */
 } /* init_apis */
@@ -557,7 +562,7 @@ void rgw::AppMain::init_lua()
   r = rgw::lua::install_packages(dpp, driver, null_yield, path,
                                  failed_packages, output);
   if (r < 0) {
-    dout(1) << "WARNING: failed to install lua packages from allowlist"
+    dout(1) << "WARNING: failed to install lua packages from allowlist. error: " << r
             << dendl;
   }
   if (!output.empty()) {

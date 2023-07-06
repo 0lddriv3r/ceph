@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Dict, List, Iterator, Optional, Any, Tuple, Se
 
 import orchestrator
 from ceph.deployment import inventory
-from ceph.deployment.service_spec import ServiceSpec, PlacementSpec, TunedProfileSpec
+from ceph.deployment.service_spec import ServiceSpec, PlacementSpec, TunedProfileSpec, IngressSpec
 from ceph.utils import str_to_datetime, datetime_to_str, datetime_now
 from orchestrator import OrchestratorError, HostSpec, OrchestratorEvent, service_to_daemon_types
 from cephadm.services.cephadmservice import CephadmDaemonDeploySpec
@@ -212,6 +212,7 @@ class SpecStore():
         self.spec_created = {}  # type: Dict[str, datetime.datetime]
         self.spec_deleted = {}  # type: Dict[str, datetime.datetime]
         self.spec_preview = {}  # type: Dict[str, ServiceSpec]
+        self._needs_configuration: Dict[str, bool] = {}
 
     @property
     def all_specs(self) -> Mapping[str, ServiceSpec]:
@@ -263,6 +264,9 @@ class SpecStore():
                     deleted = str_to_datetime(cast(str, j['deleted']))
                     self.spec_deleted[service_name] = deleted
 
+                if 'needs_configuration' in j:
+                    self._needs_configuration[service_name] = cast(bool, j['needs_configuration'])
+
                 if 'rank_map' in j and isinstance(j['rank_map'], dict):
                     self._rank_maps[service_name] = {}
                     for rank_str, m in j['rank_map'].items():
@@ -299,6 +303,7 @@ class SpecStore():
             self.spec_preview[name] = spec
             return None
         self._specs[name] = spec
+        self._needs_configuration[name] = True
 
         if update_create:
             self.spec_created[name] = datetime_now()
@@ -313,12 +318,15 @@ class SpecStore():
     def _save(self, name: str) -> None:
         data: Dict[str, Any] = {
             'spec': self._specs[name].to_json(),
-            'created': datetime_to_str(self.spec_created[name]),
         }
+        if name in self.spec_created:
+            data['created'] = datetime_to_str(self.spec_created[name])
         if name in self._rank_maps:
             data['rank_map'] = self._rank_maps[name]
         if name in self.spec_deleted:
             data['deleted'] = datetime_to_str(self.spec_deleted[name])
+        if name in self._needs_configuration:
+            data['needs_configuration'] = self._needs_configuration[name]
 
         self.mgr.set_store(
             SPEC_STORE_PREFIX + name,
@@ -350,6 +358,8 @@ class SpecStore():
             del self.spec_created[service_name]
             if service_name in self.spec_deleted:
                 del self.spec_deleted[service_name]
+            if service_name in self._needs_configuration:
+                del self._needs_configuration[service_name]
             self.mgr.set_store(SPEC_STORE_PREFIX + service_name, None)
         return found
 
@@ -364,6 +374,23 @@ class SpecStore():
         self._specs[service_name].unmanaged = value
         self.save(self._specs[service_name])
         return f'Set unmanaged to {str(value)} for service {service_name}'
+
+    def needs_configuration(self, name: str) -> bool:
+        return self._needs_configuration.get(name, False)
+
+    def mark_needs_configuration(self, name: str) -> None:
+        if name in self._specs:
+            self._needs_configuration[name] = True
+            self._save(name)
+        else:
+            self.mgr.log.warning(f'Attempted to mark unknown service "{name}" as needing configuration')
+
+    def mark_configured(self, name: str) -> None:
+        if name in self._specs:
+            self._needs_configuration[name] = False
+            self._save(name)
+        else:
+            self.mgr.log.warning(f'Attempted to mark unknown service "{name}" as having been configured')
 
 
 class ClientKeyringSpec(object):
@@ -553,6 +580,7 @@ class HostCache():
         # type: (CephadmOrchestrator) -> None
         self.mgr: CephadmOrchestrator = mgr
         self.daemons = {}   # type: Dict[str, Dict[str, orchestrator.DaemonDescription]]
+        self._tmp_daemons = {}  # type: Dict[str, Dict[str, orchestrator.DaemonDescription]]
         self.last_daemon_update = {}   # type: Dict[str, datetime.datetime]
         self.devices = {}              # type: Dict[str, List[inventory.Device]]
         self.facts = {}                # type: Dict[str, Dict[str, Any]]
@@ -666,7 +694,17 @@ class HostCache():
     def update_host_daemons(self, host, dm):
         # type: (str, Dict[str, orchestrator.DaemonDescription]) -> None
         self.daemons[host] = dm
+        self._tmp_daemons.pop(host, {})
         self.last_daemon_update[host] = datetime_now()
+
+    def append_tmp_daemon(self, host: str, dd: orchestrator.DaemonDescription) -> None:
+        # for storing empty daemon descriptions representing daemons we have
+        # just deployed but not yet had the chance to pick up in a daemon refresh
+        # _tmp_daemons is cleared for a host upon receiving a real update of the
+        # host's dameons
+        if host not in self._tmp_daemons:
+            self._tmp_daemons[host] = {}
+        self._tmp_daemons[host][dd.name()] = dd
 
     def update_host_facts(self, host, facts):
         # type: (str, Dict[str, Dict[str, Any]]) -> None
@@ -1014,6 +1052,10 @@ class HostCache():
         for dm in self.daemons.copy().values():
             yield from dm.values()
 
+    def _get_tmp_daemons(self) -> Iterator[orchestrator.DaemonDescription]:
+        for dm in self._tmp_daemons.copy().values():
+            yield from dm.values()
+
     def get_daemons(self):
         # type: () -> List[orchestrator.DaemonDescription]
         return list(self._get_daemons())
@@ -1066,6 +1108,21 @@ class HostCache():
         assert not service_name.startswith('haproxy.')
 
         return list(dd for dd in self._get_daemons() if dd.service_name() == service_name)
+
+    def get_related_service_daemons(self, service_spec: ServiceSpec) -> Optional[List[orchestrator.DaemonDescription]]:
+        if service_spec.service_type == 'ingress':
+            dds = list(dd for dd in self._get_daemons() if dd.service_name() == cast(IngressSpec, service_spec).backend_service)
+            dds += list(dd for dd in self._get_tmp_daemons() if dd.service_name() == cast(IngressSpec, service_spec).backend_service)
+            logger.debug(f'Found related daemons {dds} for service {service_spec.service_name()}')
+            return dds
+        else:
+            for ingress_spec in [cast(IngressSpec, s) for s in self.mgr.spec_store.active_specs.values() if s.service_type == 'ingress']:
+                if ingress_spec.backend_service == service_spec.service_name():
+                    dds = list(dd for dd in self._get_daemons() if dd.service_name() == ingress_spec.service_name())
+                    dds += list(dd for dd in self._get_tmp_daemons() if dd.service_name() == ingress_spec.service_name())
+                    logger.debug(f'Found related daemons {dds} for service {service_spec.service_name()}')
+                    return dds
+        return None
 
     def get_daemons_by_type(self, service_type: str, host: str = '') -> List[orchestrator.DaemonDescription]:
         assert service_type not in ['keepalived', 'haproxy']

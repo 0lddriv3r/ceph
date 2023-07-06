@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-
 import json
 import os
 import tempfile
@@ -11,8 +10,9 @@ from .. import mgr
 from ..exceptions import DashboardException
 from ..security import Scope
 from ..services import ceph_service
-from ..settings import Settings
-from . import APIDoc, APIRouter, BaseController, Endpoint, RESTController, Router
+from ..services.settings import SettingsService
+from ..settings import Options, Settings
+from . import APIDoc, APIRouter, BaseController, Endpoint, RESTController, Router, UIRouter
 
 
 @Router('/api/prometheus_receiver', secure=False)
@@ -105,14 +105,11 @@ class PrometheusRESTController(RESTController):
                 component='prometheus')
         balancer_status = self.balancer_status()
         if content['status'] == 'success':  # pylint: disable=R1702
+            alerts_info = []
             if 'data' in content:
                 if balancer_status['active'] and balancer_status['no_optimization_needed'] and path == '/alerts':  # noqa E501  #pylint: disable=line-too-long
-                    for alert in content['data']:
-                        for k, v in alert.items():
-                            if k == 'labels':
-                                for key, value in v.items():
-                                    if key == 'alertname' and value == 'CephPGImbalance':
-                                        content['data'].remove(alert)
+                    alerts_info = [alert for alert in content['data'] if alert['labels']['alertname'] != 'CephPGImbalance']  # noqa E501  #pylint: disable=line-too-long
+                    return alerts_info
                 return content['data']
             return content
         raise DashboardException(content, http_status_code=400, component='prometheus')
@@ -157,3 +154,16 @@ class PrometheusNotifications(RESTController):
                 return PrometheusReceiver.notifications[-1:]
             return PrometheusReceiver.notifications[int(f) + 1:]
         return PrometheusReceiver.notifications
+
+
+@UIRouter('/prometheus', Scope.PROMETHEUS)
+class PrometheusSettings(RESTController):
+    def get(self, name):
+        with SettingsService.attribute_handler(name) as settings_name:
+            setting = getattr(Options, settings_name)
+        return {
+            'name': settings_name,
+            'default': setting.default_value,
+            'type': setting.types_as_str(),
+            'value': getattr(Settings, settings_name)
+        }

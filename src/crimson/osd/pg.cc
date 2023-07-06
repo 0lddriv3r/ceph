@@ -110,7 +110,6 @@ PG::PG(
     pgmeta_oid{pgid.make_pgmeta_oid()},
     osdmap_gate("PG::osdmap_gate"),
     shard_services{shard_services},
-    osdmap{osdmap},
     backend(
       PGBackend::create(
 	pgid.pgid,
@@ -163,6 +162,24 @@ PG::PG(
 }
 
 PG::~PG() {}
+
+void PG::check_blocklisted_watchers()
+{
+  logger().debug("{}", __func__);
+  obc_registry.for_each([this](ObjectContextRef obc) {
+    assert(obc);
+    for (const auto& [key, watch] : obc->watchers) {
+      assert(watch->get_pg() == this);
+      const auto& ea = watch->get_peer_addr();
+      logger().debug("watch: Found {} cookie {}. Checking entity_add_t {}",
+                     watch->get_entity(), watch->get_cookie(), ea);
+      if (get_osdmap()->is_blocklisted(ea)) {
+        logger().info("watch: Found blocklisted watcher for {}", ea);
+        watch->do_watch_timeout();
+      }
+    }
+  });
+}
 
 bool PG::try_flush_or_schedule_async() {
   logger().debug("PG::try_flush_or_schedule_async: flush ...");
@@ -453,9 +470,10 @@ void PG::on_active_actmap()
 {
   logger().debug("{}: {} snap_trimq={}", *this, __func__, snap_trimq);
   peering_state.state_clear(PG_STATE_SNAPTRIM_ERROR);
+  // loops until snap_trimq is empty or SNAPTRIM_ERROR.
   std::ignore = seastar::do_until(
     [this] { return snap_trimq.empty()
-                    && !peering_state.state_test(PG_STATE_SNAPTRIM_ERROR);
+                    || peering_state.state_test(PG_STATE_SNAPTRIM_ERROR);
     },
     [this] {
       peering_state.state_set(PG_STATE_SNAPTRIM);
@@ -488,7 +506,10 @@ void PG::on_active_actmap()
         logger().debug("{}: trimmed snap={}", *this, trimmed);
       });
     }).finally([this] {
+      logger().debug("{}: PG::on_active_actmap() finished trimming",
+                     *this);
       peering_state.state_clear(PG_STATE_SNAPTRIM);
+      peering_state.state_clear(PG_STATE_SNAPTRIM_ERROR);
       publish_stats_to_osd();
     });
 }
@@ -514,7 +535,7 @@ void PG::on_active_advmap(const OSDMapRef &osdmap)
     }
     logger().info("{}: {} new removed snaps {}, snap_trimq now{}",
                   *this, __func__, it->second, snap_trimq);
-    assert(!bad || local_conf().get_val<bool>("osd_debug_verify_cached_snaps"));
+    assert(!bad || !local_conf().get_val<bool>("osd_debug_verify_cached_snaps"));
   }
 }
 

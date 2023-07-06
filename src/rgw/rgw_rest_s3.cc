@@ -299,6 +299,10 @@ int RGWGetObj_ObjStore_S3::get_params(optional_yield y)
     skip_decrypt = s->info.args.exists(RGW_SYS_PARAM_PREFIX "skip-decrypt");
   }
 
+  // multisite sync requests should fetch cloudtiered objects
+  sync_cloudtiered = s->info.args.exists(RGW_SYS_PARAM_PREFIX "sync-cloudtiered");
+
+  dst_zone_trace = s->info.args.get(RGW_SYS_PARAM_PREFIX "if-not-replicated-to");
   get_torrent = s->info.args.exists("torrent");
 
   return RGWGetObj_ObjStore::get_params(y);
@@ -435,6 +439,17 @@ int RGWGetObj_ObjStore_S3::send_response_data(bufferlist& bl, off_t bl_ofs,
   if (auto i = attrs.find(RGW_ATTR_OBJ_REPLICATION_STATUS);
       i != attrs.end()) {
     dump_header(s, "x-amz-replication-status", i->second);
+  }
+  if (auto i = attrs.find(RGW_ATTR_OBJ_REPLICATION_TRACE);
+      i != attrs.end()) {
+    try {
+      std::vector<rgw_zone_set_entry> zones;
+      auto p = i->second.cbegin();
+      decode(zones, p);
+      for (const auto& zone : zones) {
+        dump_header(s, "x-rgw-replicated-from", zone.to_str());
+      }
+    } catch (const buffer::error&) {} // omit x-rgw-replicated-from headers
   }
 
   if (! op_ret) {
@@ -1937,7 +1952,7 @@ void RGWListBucket_ObjStore_S3v2::send_versioned_response()
         s->formatter->dump_string("StorageClass", storage_class.c_str());
       }
       if (fetchOwner == true) {
-        dump_owner(s, s->user->get_id(), s->user->get_display_name());
+        dump_owner(s, rgw_user(iter->meta.owner), iter->meta.owner_display_name);
       }
       s->formatter->close_section();
     }
@@ -2016,7 +2031,7 @@ void RGWListBucket_ObjStore_S3v2::send_response()
       auto& storage_class = rgw_placement_rule::get_canonical_storage_class(iter->meta.storage_class);
       s->formatter->dump_string("StorageClass", storage_class.c_str());
       if (fetchOwner == true) {
-        dump_owner(s, s->user->get_id(), s->user->get_display_name());
+        dump_owner(s, rgw_user(iter->meta.owner), iter->meta.owner_display_name);
       }
       if (s->system_request) {
         s->formatter->dump_string("RgwxTag", iter->tag);
@@ -3431,7 +3446,10 @@ int RGWCopyObj_ObjStore_S3::get_params(optional_yield y)
     s->info.args.get_bool(RGW_SYS_PARAM_PREFIX "copy-if-newer", &copy_if_newer, false);
   }
 
-  copy_source = s->info.env->get("HTTP_X_AMZ_COPY_SOURCE");
+  const char *copy_source_temp = s->info.env->get("HTTP_X_AMZ_COPY_SOURCE");
+  if (copy_source_temp) {
+    copy_source = copy_source_temp;
+  }
   auto tmp_md_d = s->info.env->get("HTTP_X_AMZ_METADATA_DIRECTIVE");
   if (tmp_md_d) {
     if (strcasecmp(tmp_md_d, "COPY") == 0) {
@@ -5930,8 +5948,9 @@ AWSGeneralAbstractor::get_auth_data_v2(const req_state* const s) const
       signature = auth_str.substr(pos + 1);
     }
 
-    if (s->info.env->exists("HTTP_X_AMZ_SECURITY_TOKEN")) {
-      session_token = s->info.env->get("HTTP_X_AMZ_SECURITY_TOKEN");
+    auto token = s->info.env->get_optional("HTTP_X_AMZ_SECURITY_TOKEN");
+    if (token) {
+      session_token = *token;
       if (session_token.size() == 0) {
         throw -EPERM;
       }

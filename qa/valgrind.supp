@@ -184,6 +184,22 @@
    fun:*GetStackTrace*
 }
 {
+   tcmalloc: param points to uninit bytes under call_init (jammy)
+   Memcheck:Param
+   write(buf)
+   fun:syscall
+   obj:*libunwind*
+   obj:*libunwind*
+   obj:*libunwind*
+   obj:*libunwind*
+   fun:_ULx86_64_step
+   obj:*tcmalloc*
+   obj:*tcmalloc*
+   obj:*tcmalloc*
+   obj:*tcmalloc*
+   fun:call_init.part.0
+}
+{
 	tcmalloc: string
 	Memcheck:Leak
 	...
@@ -196,20 +212,6 @@
 	Memcheck:Leak
 	...
 	fun:*set_flush_on_exit*
-	...
-}
-{
-	libleveldb: ignore all static leveldb leaks
-	Memcheck:Leak
-	...
-	fun:*leveldb*
-	...
-}
-{
-	libleveldb: ignore all dynamic libleveldb leaks
-	Memcheck:Leak
-	...
-	obj:*libleveldb.so*
 	...
 }
 {

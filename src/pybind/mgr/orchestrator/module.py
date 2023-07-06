@@ -170,6 +170,18 @@ class DaemonAction(enum.Enum):
     rotate_key = 'rotate-key'
 
 
+class IngressType(enum.Enum):
+    default = 'default'
+    keepalive_only = 'keepalive-only'
+    haproxy_standard = 'haproxy-standard'
+    haproxy_protocol = 'haproxy-protocol'
+
+    def canonicalize(self) -> "IngressType":
+        if self == self.default:
+            return IngressType(self.haproxy_standard)
+        return IngressType(self)
+
+
 def to_format(what: Any, format: Format, many: bool, cls: Any) -> Any:
     def to_json_1(obj: Any) -> Any:
         if hasattr(obj, 'to_json'):
@@ -1000,9 +1012,11 @@ Usage:
                       osd_id: List[str],
                       replace: bool = False,
                       force: bool = False,
-                      zap: bool = False) -> HandleCommandResult:
+                      zap: bool = False,
+                      no_destroy: bool = False) -> HandleCommandResult:
         """Remove OSD daemons"""
-        completion = self.remove_osds(osd_id, replace=replace, force=force, zap=zap)
+        completion = self.remove_osds(osd_id, replace=replace, force=force,
+                                      zap=zap, no_destroy=no_destroy)
         raise_if_exception(completion)
         return HandleCommandResult(stdout=completion.result_str())
 

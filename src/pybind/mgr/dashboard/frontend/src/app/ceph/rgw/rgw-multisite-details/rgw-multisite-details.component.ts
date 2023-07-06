@@ -24,6 +24,7 @@ import { ModalService } from '~/app/shared/services/modal.service';
 import { NotificationService } from '~/app/shared/services/notification.service';
 import { TimerService } from '~/app/shared/services/timer.service';
 import { RgwRealm, RgwZone, RgwZonegroup } from '../models/rgw-multisite';
+import { RgwMultisiteMigrateComponent } from '../rgw-multisite-migrate/rgw-multisite-migrate.component';
 import { RgwMultisiteZoneDeletionFormComponent } from '../models/rgw-multisite-zone-deletion-form/rgw-multisite-zone-deletion-form.component';
 import { RgwMultisiteZonegroupDeletionFormComponent } from '../models/rgw-multisite-zonegroup-deletion-form/rgw-multisite-zonegroup-deletion-form.component';
 import { RgwMultisiteRealmFormComponent } from '../rgw-multisite-realm-form/rgw-multisite-realm-form.component';
@@ -42,13 +43,15 @@ export class RgwMultisiteDetailsComponent implements OnDestroy, OnInit {
 
   messages = {
     noDefaultRealm: $localize`Please create a default realm first to enable this feature`,
-    noMasterZone: $localize`Please create a master zone for each zonegroups to enable this feature`
+    noMasterZone: $localize`Please create a master zone for each zonegroup to enable this feature`,
+    disableMigrate: $localize`Deployment is already migrated to multi-site system.`
   };
 
   icons = Icons;
   permission: Permission;
   selection = new CdTableSelection();
   createTableActions: CdTableAction[];
+  migrateTableAction: CdTableAction[];
   loadingIndicator = true;
   nodes: object[] = [];
   treeOptions: ITreeOptions = {
@@ -76,7 +79,9 @@ export class RgwMultisiteDetailsComponent implements OnDestroy, OnInit {
   defaultZoneId = '';
   multisiteInfo: object[] = [];
   defaultsInfo: string[] = [];
-  title: string = 'Edit';
+  showMigrateAction: boolean = false;
+  editTitle: string = 'Edit';
+  deleteTitle: string = 'Delete';
 
   constructor(
     private modalService: ModalService,
@@ -109,7 +114,14 @@ export class RgwMultisiteDetailsComponent implements OnDestroy, OnInit {
       name: this.actionLabels.CREATE + ' Zone',
       click: () => this.openModal('zone')
     };
+    const migrateMultsiteAction: CdTableAction = {
+      permission: 'read',
+      icon: Icons.exchange,
+      name: this.actionLabels.MIGRATE,
+      click: () => this.openMigrateModal()
+    };
     this.createTableActions = [createRealmAction, createZonegroupAction, createZoneAction];
+    this.migrateTableAction = [migrateMultsiteAction];
   }
 
   openModal(entity: any, edit = false) {
@@ -135,6 +147,15 @@ export class RgwMultisiteDetailsComponent implements OnDestroy, OnInit {
         size: 'lg'
       });
     }
+  }
+
+  openMigrateModal() {
+    const initialState = {
+      multisiteInfo: this.multisiteInfo
+    };
+    this.bsModalRef = this.modalService.show(RgwMultisiteMigrateComponent, initialState, {
+      size: 'lg'
+    });
   }
 
   ngOnInit() {
@@ -257,6 +278,7 @@ export class RgwMultisiteDetailsComponent implements OnDestroy, OnInit {
     }
     this.realmIds = [];
     this.zoneIds = [];
+    this.getDisableMigrate();
     return allNodes;
   }
 
@@ -302,14 +324,78 @@ export class RgwMultisiteDetailsComponent implements OnDestroy, OnInit {
         }
       });
       if (!isMasterZone) {
-        this.title =
+        this.editTitle =
           'Please create a master zone for each existing zonegroup to enable this feature';
         return this.messages.noMasterZone;
       } else {
-        this.title = 'Edit';
+        this.editTitle = 'Edit';
         return false;
       }
     }
+  }
+
+  getDisableMigrate() {
+    if (
+      this.realms.length === 0 &&
+      this.zonegroups.length === 1 &&
+      this.zonegroups[0].name === 'default' &&
+      this.zones.length === 1 &&
+      this.zones[0].name === 'default'
+    ) {
+      this.showMigrateAction = true;
+    } else {
+      this.showMigrateAction = false;
+    }
+    return this.showMigrateAction;
+  }
+
+  isDeleteDisabled(node: TreeNode): boolean {
+    let disable: boolean = false;
+    let masterZonegroupCount: number = 0;
+    if (node.data.type === 'realm' && node.data.is_default && this.realms.length < 2) {
+      disable = true;
+    }
+
+    if (node.data.type === 'zonegroup') {
+      if (this.zonegroups.length < 2) {
+        this.deleteTitle = 'You can not delete the only zonegroup available';
+        disable = true;
+      } else if (node.data.is_default) {
+        this.deleteTitle = 'You can not delete the default zonegroup';
+        disable = true;
+      } else if (node.data.is_master) {
+        for (let zonegroup of this.zonegroups) {
+          if (zonegroup.is_master === true) {
+            masterZonegroupCount++;
+            if (masterZonegroupCount > 1) break;
+          }
+        }
+        if (masterZonegroupCount < 2) {
+          this.deleteTitle = 'You can not delete the only master zonegroup available';
+          disable = true;
+        }
+      }
+    }
+
+    if (node.data.type === 'zone') {
+      if (this.zones.length < 2) {
+        this.deleteTitle = 'You can not delete the only zone available';
+        disable = true;
+      } else if (node.data.is_default) {
+        this.deleteTitle = 'You can not delete the default zone';
+        disable = true;
+      } else if (node.data.is_master && node.data.zone_zonegroup.zones.length < 2) {
+        this.deleteTitle =
+          'You can not delete the master zone as there are no more zones in this zonegroup';
+        disable = true;
+      }
+    }
+
+    if (!disable) {
+      this.deleteTitle = 'Delete';
+    }
+
+    return disable;
   }
 
   delete(node: TreeNode) {

@@ -12,7 +12,9 @@ import sys
 
 from datetime import datetime, timedelta
 from nose import with_setup, SkipTest
-from nose.tools import eq_ as eq, assert_raises, assert_not_equal
+from nose.plugins.attrib import attr
+from nose.tools import (eq_ as eq, assert_raises, assert_not_equal,
+                        assert_greater_equal)
 from rados import (Rados,
                    LIBRADOS_OP_FLAG_FADVISE_DONTNEED,
                    LIBRADOS_OP_FLAG_FADVISE_NOCACHE,
@@ -74,7 +76,8 @@ def setup_module():
     RBD().pool_init(ioctx, True)
     global features
     features = os.getenv("RBD_FEATURES")
-    features = int(features) if features is not None else 61
+    if features is not None:
+        features = int(features)
 
 def teardown_module():
     global ioctx
@@ -605,6 +608,9 @@ class TestImage(object):
     def test_block_name_prefix(self):
         assert_not_equal(b'', self.image.block_name_prefix())
 
+    def test_data_pool_id(self):
+        assert_greater_equal(self.image.data_pool_id(), 0)
+
     def test_create_timestamp(self):
         timestamp = self.image.create_timestamp()
         assert_not_equal(0, timestamp.year)
@@ -777,6 +783,7 @@ class TestImage(object):
         self._test_copy(features, self.image.stat()['order'],
                         self.image.stripe_unit(), self.image.stripe_count())
 
+    @attr('SKIP_IF_CRIMSON')
     def test_deep_copy(self):
         global ioctx
         global features
@@ -2029,6 +2036,7 @@ class TestExclusiveLock(object):
             image.lock_acquire(RBD_LOCK_MODE_EXCLUSIVE)
             image.lock_release()
 
+    @attr('SKIP_IF_CRIMSON')
     def test_break_lock(self):
         blocklist_rados = Rados(conffile='')
         blocklist_rados.connect()

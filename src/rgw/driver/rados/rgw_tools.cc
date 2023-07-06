@@ -21,7 +21,8 @@ using namespace std;
 int rgw_init_ioctx(const DoutPrefixProvider *dpp,
                    librados::Rados *rados, const rgw_pool& pool,
                    librados::IoCtx& ioctx, bool create,
-		   bool mostly_omap)
+                   bool mostly_omap,
+                   bool bulk)
 {
   int r = rados->ioctx_create(pool.name.c_str(), ioctx);
   if (r == -ENOENT && create) {
@@ -71,6 +72,18 @@ int rgw_init_ioctx(const DoutPrefixProvider *dpp,
       if (r < 0) {
 	ldpp_dout(dpp, 10) << __func__ << " warning: failed to set recovery_priority on "
 		 << pool.name << dendl;
+      }
+    }
+    if (bulk) {
+      // set bulk
+      bufferlist inbl;
+      int r = rados->mon_command(
+        "{\"prefix\": \"osd pool set\", \"pool\": \"" +
+        pool.name + "\", \"var\": \"bulk\", \"val\": \"true\"}",
+        inbl, NULL, NULL);
+      if (r < 0) {
+        ldpp_dout(dpp, 10) << __func__ << " warning: failed to set 'bulk' on "
+                 << pool.name << dendl;
       }
     }
   } else if (r < 0) {
@@ -165,7 +178,7 @@ int rgw_delete_system_obj(const DoutPrefixProvider *dpp,
 
 int rgw_rados_operate(const DoutPrefixProvider *dpp, librados::IoCtx& ioctx, const std::string& oid,
                       librados::ObjectReadOperation *op, bufferlist* pbl,
-                      optional_yield y, int flags, const jspan_context* trace_info)
+                      optional_yield y, int flags)
 {
   // given a yield_context, call async_operate() to yield the coroutine instead
   // of blocking
@@ -192,13 +205,13 @@ int rgw_rados_operate(const DoutPrefixProvider *dpp, librados::IoCtx& ioctx, con
 
 int rgw_rados_operate(const DoutPrefixProvider *dpp, librados::IoCtx& ioctx, const std::string& oid,
                       librados::ObjectWriteOperation *op, optional_yield y,
-		      int flags, const jspan_context* trace_info)
+		      int flags)
 {
   if (y) {
     auto& context = y.get_io_context();
     auto& yield = y.get_yield_context();
     boost::system::error_code ec;
-    librados::async_operate(context, ioctx, oid, op, flags, yield[ec], trace_info);
+    librados::async_operate(context, ioctx, oid, op, flags, yield[ec]);
     return -ec.value();
   }
   if (is_asio_thread) {
@@ -207,7 +220,7 @@ int rgw_rados_operate(const DoutPrefixProvider *dpp, librados::IoCtx& ioctx, con
     ldpp_dout(dpp, 20) << "BACKTRACE: " << __func__ << ": " << ClibBackTrace(0) << dendl;
 #endif
   }
-  return ioctx.operate(oid, op, flags, trace_info);
+  return ioctx.operate(oid, op, flags);
 }
 
 int rgw_rados_notify(const DoutPrefixProvider *dpp, librados::IoCtx& ioctx, const std::string& oid,

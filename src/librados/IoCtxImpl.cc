@@ -637,7 +637,7 @@ int librados::IoCtxImpl::writesame(const object_t& oid, bufferlist& bl,
 }
 
 int librados::IoCtxImpl::operate(const object_t& oid, ::ObjectOperation *o,
-				 ceph::real_time *pmtime, int flags, const jspan_context* otel_trace)
+				 ceph::real_time *pmtime, int flags)
 {
   ceph::real_time ut = (pmtime ? *pmtime :
     ceph::real_clock::now());
@@ -664,7 +664,7 @@ int librados::IoCtxImpl::operate(const object_t& oid, ::ObjectOperation *o,
     oid, oloc,
     *o, snapc, ut,
     flags | extra_op_flags,
-    oncommit, &ver, osd_reqid_t(), nullptr, otel_trace);
+    oncommit, &ver);
   objecter->op_submit(objecter_op);
 
   {
@@ -751,12 +751,13 @@ int librados::IoCtxImpl::aio_operate_read(const object_t &oid,
 
 int librados::IoCtxImpl::aio_operate(const object_t& oid,
 				     ::ObjectOperation *o, AioCompletionImpl *c,
-				     const SnapContext& snap_context, int flags,
-                                     const blkin_trace_info *trace_info, const jspan_context *otel_trace)
+				     const SnapContext& snap_context,
+				     const ceph::real_time *pmtime, int flags,
+                                     const blkin_trace_info *trace_info)
 {
   FUNCTRACE(client->cct);
   OID_EVENT_TRACE(oid.name.c_str(), "RADOS_WRITE_OP_BEGIN");
-  auto ut = ceph::real_clock::now();
+  const ceph::real_time ut = (pmtime ? *pmtime : ceph::real_clock::now());
   /* can't write to a snapshot */
   if (snap_seq != CEPH_NOSNAP)
     return -EROFS;
@@ -778,7 +779,7 @@ int librados::IoCtxImpl::aio_operate(const object_t& oid,
   trace.event("init root span");
   Objecter::Op *op = objecter->prepare_mutate_op(
     oid, oloc, *o, snap_context, ut, flags | extra_op_flags,
-    oncomplete, &c->objver, osd_reqid_t(), &trace, otel_trace);
+    oncomplete, &c->objver, osd_reqid_t(), &trace);
   objecter->op_submit(op, &c->tid);
   trace.event("rados operate op submitted");
 
@@ -1137,7 +1138,7 @@ int librados::IoCtxImpl::aio_rmxattr(const object_t& oid, AioCompletionImpl *c,
   ::ObjectOperation op;
   prepare_assert_ops(&op);
   op.rmxattr(name);
-  return aio_operate(oid, &op, c, snapc, 0);
+  return aio_operate(oid, &op, c, snapc, nullptr, 0);
 }
 
 int librados::IoCtxImpl::aio_setxattr(const object_t& oid, AioCompletionImpl *c,
@@ -1146,7 +1147,7 @@ int librados::IoCtxImpl::aio_setxattr(const object_t& oid, AioCompletionImpl *c,
   ::ObjectOperation op;
   prepare_assert_ops(&op);
   op.setxattr(name, bl);
-  return aio_operate(oid, &op, c, snapc, 0);
+  return aio_operate(oid, &op, c, snapc, nullptr, 0);
 }
 
 namespace {

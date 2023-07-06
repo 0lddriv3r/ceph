@@ -1,7 +1,7 @@
 <div class="container-fluid"
      *ngIf="healthData && enabledFeature$ | async as enabledFeature">
   <div class="row mx-0">
-    <cd-card title="Details"
+    <cd-card cardTitle="Details"
              i18n-title
              class="col-sm-3 px-3"
              [ngClass]="{'d-flex': flexHeight}"
@@ -16,16 +16,32 @@
       </dl>
     </cd-card>
 
-    <cd-card title="Status"
+    <cd-card cardTitle="Status"
              i18n-title
              class="col-sm-6 px-3 d-flex"
              aria-label="Status card">
       <div class="d-flex ms-4 me-4 mb-5 center-content">
+        <ng-template #healthChecks>
+          <ng-container *ngTemplateOutlet="logsLink"></ng-container>
+          <ul>
+            <li *ngFor="let check of healthData.health.checks">
+              <span [ngStyle]="check.severity | healthColor"
+                    [class.health-warn-description]="check.severity === 'HEALTH_WARN'">
+              {{ check.type }}</span>: {{ check.summary.message }}
+            </li>
+          </ul>
+        </ng-template>
         <i *ngIf="healthData.health?.status"
            [ngClass]="[healthData.health.status | healthIcon, icons.large2x]"
            [ngStyle]="healthData.health.status | healthColor"
            [title]="healthData.health.status"></i>
+        <a class="ms-2 mt-n1 lead text-primary"
+           [ngbPopover]="healthChecks"
+           popoverClass="info-card-popover-cluster-status"
+           *ngIf="healthData.health?.checks?.length"
+           i18n>Cluster</a>
         <span class="ms-2 mt-n1 lead"
+              *ngIf="!healthData.health?.checks?.length"
               i18n>Cluster</span>
       </div>
       <section class="border-top mt-5"
@@ -77,7 +93,7 @@
       </section>
     </cd-card>
 
-    <cd-card title="Capacity"
+    <cd-card cardTitle="Capacity"
              i18n-title
              class="col-sm-3 px-3"
              [ngClass]="{'d-flex': flexHeight}"
@@ -94,7 +110,7 @@
   <!-- Second row -->
   <div class="row mx-0">
     <!-- Inventory Card -->
-    <cd-card title="Inventory"
+    <cd-card cardTitle="Inventory"
              i18n-title
              class="col-sm-3 px-3 d-flex"
              aria-label="Inventory card">
@@ -183,7 +199,7 @@
       </li>
     </cd-card>
 
-    <cd-card title="Cluster utilization"
+    <cd-card cardTitle="Cluster utilization"
              i18n-title
              class="col-sm-9 px-3 d-flex"
              aria-label="Cluster utilization card">
@@ -193,13 +209,13 @@
         <ng-container *ngIf="capacity">
           <cd-dashboard-area-chart chartTitle="Used Capacity"
                                    [maxValue]="capacity.total_bytes"
-                                   dataUnits="bytes"
+                                   dataUnits="B"
                                    label="Used Capacity"
                                    [data]="queriesResults.USEDCAPACITY">
           </cd-dashboard-area-chart>
         </ng-container>
         <cd-dashboard-area-chart chartTitle="IOPS"
-                                 dataUnits="none"
+                                 dataUnits=""
                                  label="OPS"
                                  label2="IPS"
                                  [data]="queriesResults.OPS"
@@ -213,14 +229,14 @@
                                  [data2]="queriesResults.WRITELATENCY">
         </cd-dashboard-area-chart>
         <cd-dashboard-area-chart chartTitle="Client Throughput"
-                                 dataUnits="bytesPerSecond"
+                                 dataUnits="B/s"
                                  label="Read"
                                  label2="Write"
                                  [data]="queriesResults.READCLIENTTHROUGHPUT"
                                  [data2]="queriesResults.WRITECLIENTTHROUGHPUT">
         </cd-dashboard-area-chart>
         <cd-dashboard-area-chart chartTitle="Recovery Throughput"
-                                 dataUnits="bytesPerSecond"
+                                 dataUnits="B/s"
                                  label="Recovery Throughput"
                                  [data]="queriesResults.RECOVERYBYTES">
         </cd-dashboard-area-chart>
@@ -257,5 +273,12 @@
       </div>
       <hr>
     </div>
+  </ng-container>
+</ng-template>
+
+<ng-template #logsLink>
+  <ng-container *ngIf="permissions.log.read">
+    <p class="logs-link"
+       i18n><i [ngClass]="[icons.infoCircle]"></i> See <a routerLink="/logs">Logs</a> for more details.</p>
   </ng-container>
 </ng-template>
